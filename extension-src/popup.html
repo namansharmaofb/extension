@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Automation Agent</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        margin: 0;
+        padding: 8px 10px;
+        width: 360px;
+        background: #020617;
+        color: #e5e7eb;
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 12px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 4px;
+      }
+
+      .header-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .header-status {
+        font-size: 11px;
+        color: #4ade80;
+      }
+
+      .card {
+        border-radius: 6px;
+        border: 1px solid #1f2937;
+        background: #020617;
+        padding: 6px 8px;
+      }
+
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #9ca3af;
+      }
+
+      .card-body {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      select,
+      input[type="text"] {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 4px 6px;
+        border-radius: 4px;
+        border: 1px solid #1f2937;
+        background: #020617;
+        color: #e5e7eb;
+        font-size: 11px;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 11px;
+        padding: 4px 10px;
+        font-weight: 500;
+        background: #111827;
+        color: #e5e7eb;
+        white-space: nowrap;
+      }
+
+      button.primary {
+        background: #16a34a;
+        color: white;
+      }
+
+      button.recording {
+        background: #b91c1c;
+      }
+
+      button.danger {
+        background: #dc2626;
+        color: white;
+      }
+
+      button.danger:hover {
+        background: #b91c1c;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .steps-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+
+      .steps-table th,
+      .steps-table td {
+        padding: 3px 4px;
+        border-bottom: 1px solid #111827;
+      }
+
+      .steps-table th {
+        text-align: left;
+        color: #9ca3af;
+        font-weight: 500;
+      }
+
+      .steps-empty {
+        font-size: 11px;
+        color: #6b7280;
+        padding: 2px 0;
+      }
+
+      .logs {
+        background: #020617;
+        border-radius: 4px;
+        border: 1px solid #111827;
+        padding: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 10px;
+        max-height: 110px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+      }
+
+      .status-text {
+        font-size: 11px;
+        margin-top: 2px;
+        color: #6ee7b7;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="header">
+        <div class="header-title">Automation Agent</div>
+        <div class="header-status" id="agentStatus">Ready</div>
+      </div>
+
+      <!-- FLOWS -->
+      <div class="card">
+        <div class="card-header">
+          <span>Flows</span>
+        </div>
+        <div class="card-body">
+          <select id="flowSelect">
+            <option value="">Select Flow</option>
+          </select>
+          <input
+            id="testName"
+            type="text"
+            placeholder="New flow name"
+            autocomplete="off"
+          />
+          <button id="newFlowBtn">+ New Flow</button>
+          <button id="saveFlowBtn">Save Flow</button>
+          <button id="deleteFlowBtn" class="danger">🗑 Delete Flow</button>
+        </div>
+      </div>
+
+      <!-- RECORDING -->
+      <div class="card">
+        <div class="card-header">
+          <span>Recording</span>
+        </div>
+        <div class="card-body">
+          <button id="recordBtn" class="primary">● Record</button>
+          <button id="aiStepBtn" disabled>+ AI Step</button>
+          <div class="status-text" id="statusText">Idle</div>
+        </div>
+      </div>
+
+      <!-- EXECUTION -->
+      <div class="card">
+        <div class="card-header">
+          <span>Execution</span>
+        </div>
+        <div class="card-body">
+          <button id="runFlowBtn" class="primary">▶ Run Flow</button>
+        </div>
+      </div>
+
+      <!-- STEPS -->
+      <div class="card">
+        <div class="card-header">
+          <span>Steps</span>
+        </div>
+        <div>
+          <table class="steps-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Command</th>
+                <th>Target</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody id="stepsBody">
+              <tr>
+                <td colspan="4" class="steps-empty">No steps recorded yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- EXECUTION LOGS -->
+      <div class="card">
+        <div class="card-header">
+          <span>Execution Logs</span>
+        </div>
+        <div class="logs" id="logs"></div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
