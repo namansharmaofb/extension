@@ -75,11 +75,11 @@ async function loadFlowsFromBackend() {
     const res = await fetch(`${API_BASE_URL}/api/test-cases`);
     if (!res.ok) throw new Error(`Backend responded with status ${res.status}`);
     const flows = await res.json();
-    
+
     // Clear existing options except the first "Select Flow"
     if (flowSelect) {
       flowSelect.innerHTML = '<option value="">Select Flow</option>';
-      
+
       flows.forEach((flow) => {
         const opt = document.createElement("option");
         opt.value = flow.id.toString();
@@ -88,15 +88,15 @@ async function loadFlowsFromBackend() {
         flowSelect.appendChild(opt);
       });
     }
-    
+
     // Store in Chrome storage for persistence
     await chrome.storage.local.set({ savedFlows: flows });
-    
+
     logLine(`Loaded ${flows.length} flow(s) from backend`);
   } catch (err) {
     console.error("Error loading flows", err);
     logLine("Error loading flows: " + err.message);
-    
+
     // Try to load from Chrome storage as fallback
     chrome.storage.local.get(["savedFlows"], (result) => {
       if (result.savedFlows && flowSelect) {
@@ -108,7 +108,9 @@ async function loadFlowsFromBackend() {
           opt.dataset.flowId = flow.id.toString();
           flowSelect.appendChild(opt);
         });
-        logLine(`Loaded ${result.savedFlows.length} flow(s) from local storage`);
+        logLine(
+          `Loaded ${result.savedFlows.length} flow(s) from local storage`,
+        );
       }
     });
   }
@@ -117,7 +119,7 @@ async function loadFlowsFromBackend() {
 function init() {
   // Load flows from backend first
   loadFlowsFromBackend();
-  
+
   chrome.runtime.sendMessage({ type: "GET_STATE" }, (response) => {
     if (chrome.runtime.lastError) {
       console.error(chrome.runtime.lastError);
@@ -150,11 +152,13 @@ async function sendToBackend(testCase) {
 
     const data = await res.json();
     statusText.textContent = "Saved to backend (id: " + data.id + ")";
-    logLine(`Saved test case '${testCase.name}' with id=${data.id} (${data.stepCount} steps) to database`);
-    
+    logLine(
+      `Saved test case '${testCase.name}' with id=${data.id} (${data.stepCount} steps) to database`,
+    );
+
     // Store full test case in Chrome storage for offline access
     await chrome.storage.local.set({ [`flow_${data.id}`]: testCase });
-    
+
     // Reload flows dropdown after saving
     await loadFlowsFromBackend();
   } catch (err) {
@@ -183,7 +187,7 @@ function onRecordClick() {
             renderSteps([]);
             logLine(`Started recording flow '${selectedFlowName}'`);
           }
-        }
+        },
       );
     } else {
       chrome.runtime.sendMessage({ type: "STOP_RECORDING" }, async (res) => {
@@ -198,7 +202,7 @@ function onRecordClick() {
           }
           renderSteps(testCase.steps || []);
           logLine(
-            `Stopped recording. Captured ${testCase.steps?.length || 0} steps.`
+            `Stopped recording. Captured ${testCase.steps?.length || 0} steps.`,
           );
           await sendToBackend(testCase);
         }
@@ -220,7 +224,7 @@ function onSaveFlow() {
   const name = testNameInput.value.trim();
   if (!name || !flowSelect) return;
   let existing = Array.from(flowSelect.options).find(
-    (opt) => opt.value === name
+    (opt) => opt.value === name,
   );
   if (!existing) {
     const opt = document.createElement("option");
@@ -240,38 +244,45 @@ async function onDeleteFlow() {
   }
 
   // Get flow name for confirmation
-  const flowName = flowSelect.options[flowSelect.selectedIndex]?.textContent || "this flow";
-  
+  const flowName =
+    flowSelect.options[flowSelect.selectedIndex]?.textContent || "this flow";
+
   // Confirm deletion
-  if (!confirm(`Are you sure you want to delete "${flowName}"?\n\nThis action cannot be undone.`)) {
+  if (
+    !confirm(
+      `Are you sure you want to delete "${flowName}"?\n\nThis action cannot be undone.`,
+    )
+  ) {
     return;
   }
 
   try {
     logLine(`Deleting flow ID ${selectedId}...`);
     const res = await fetch(`${API_BASE_URL}/api/test-cases/${selectedId}`, {
-      method: "DELETE"
+      method: "DELETE",
     });
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.error || `Backend responded with status ${res.status}`);
+      throw new Error(
+        errorData.error || `Backend responded with status ${res.status}`,
+      );
     }
 
     const data = await res.json();
     logLine(data.message || `Flow '${flowName}' deleted successfully`);
-    
+
     // Clear current selection
     testNameInput.value = "";
     renderSteps([]);
     flowSelect.value = "";
-    
+
     // Remove from Chrome storage
     await chrome.storage.local.remove([`flow_${selectedId}`]);
-    
+
     // Reload flows from backend
     await loadFlowsFromBackend();
-    
+
     logLine("Flow list refreshed");
   } catch (err) {
     console.error("Error deleting flow", err);
@@ -287,33 +298,39 @@ async function onFlowSelect() {
     testNameInput.value = "";
     return;
   }
-  
+
   try {
     logLine(`Loading flow ID ${selectedId} from database...`);
     const res = await fetch(`${API_BASE_URL}/api/test-cases/${selectedId}`);
     if (!res.ok) {
-      throw new Error(`Backend responded with status ${res.status}. Make sure backend is running on ${API_BASE_URL}`);
+      throw new Error(
+        `Backend responded with status ${res.status}. Make sure backend is running on ${API_BASE_URL}`,
+      );
     }
-    
+
     const testCase = await res.json();
-    
+
     if (!testCase || !testCase.steps) {
-      throw new Error("Flow loaded but has no steps. Data may not be saved in database.");
+      throw new Error(
+        "Flow loaded but has no steps. Data may not be saved in database.",
+      );
     }
-    
+
     testNameInput.value = testCase.name;
     renderSteps(testCase.steps || []);
-    logLine(`Loaded flow '${testCase.name}' with ${testCase.steps?.length || 0} steps from database`);
-    
+    logLine(
+      `Loaded flow '${testCase.name}' with ${testCase.steps?.length || 0} steps from database`,
+    );
+
     // Store full test case in Chrome storage for offline access
     await chrome.storage.local.set({ [`flow_${selectedId}`]: testCase });
-    
+
     // Don't auto-run - user must click "Run Flow" button
   } catch (err) {
     console.error("Error loading flow", err);
     logLine("Error loading flow: " + err.message);
     statusText.textContent = "Error: " + err.message;
-    
+
     // Try to load from Chrome storage as fallback
     try {
       const result = await chrome.storage.local.get([`flow_${selectedId}`]);
@@ -321,10 +338,14 @@ async function onFlowSelect() {
         const cachedFlow = result[`flow_${selectedId}`];
         testNameInput.value = cachedFlow.name;
         renderSteps(cachedFlow.steps || []);
-        logLine(`Loaded flow '${cachedFlow.name}' from local cache (${cachedFlow.steps?.length || 0} steps)`);
+        logLine(
+          `Loaded flow '${cachedFlow.name}' from local cache (${cachedFlow.steps?.length || 0} steps)`,
+        );
         await runFlow(cachedFlow);
       } else {
-        logLine("Flow not found in local cache. Please ensure backend is running and try again.");
+        logLine(
+          "Flow not found in local cache. Please ensure backend is running and try again.",
+        );
       }
     } catch (cacheErr) {
       logLine("Failed to load from cache: " + cacheErr.message);
@@ -337,89 +358,72 @@ async function runFlow(testCase) {
     logLine("No steps to execute");
     return;
   }
-  
-  logLine(`Starting execution of flow '${testCase.name}' (${testCase.steps.length} steps)...`);
-  logLine("Executing steps... (check browser console for detailed logs)");
+
+  logLine(
+    `Starting execution of flow '${testCase.name}' (${testCase.steps.length} steps)...`,
+  );
   agentStatus.textContent = "Running";
   agentStatus.style.color = "#fbbf24";
-  
+
   try {
     // Get the active tab
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
     if (!tab) {
       throw new Error("No active tab found");
     }
-    
-    // Check if tab URL is injectable (not chrome:// or extension pages)
-    if (tab.url && (tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("edge://"))) {
-      throw new Error("Cannot execute on this page. Please navigate to a regular webpage (http:// or https://).");
+
+    // Check if tab URL is injectable
+    if (
+      tab.url &&
+      (tab.url.startsWith("chrome://") ||
+        tab.url.startsWith("chrome-extension://") ||
+        tab.url.startsWith("edge://"))
+    ) {
+      throw new Error(
+        "Cannot execute on this page. Please navigate to a regular webpage (http:// or https://).",
+      );
     }
-    
-    if (!tab.url || (!tab.url.startsWith("http://") && !tab.url.startsWith("https://"))) {
-      throw new Error("Please navigate to a regular webpage (http:// or https://) to execute flows.");
+
+    // Send START_EXECUTION to background
+    const response = await chrome.runtime.sendMessage({
+      type: "START_EXECUTION",
+      testCase: testCase,
+      tabId: tab.id,
+    });
+
+    if (response && response.success) {
+      logLine("Flow execution started in background...");
+    } else {
+      throw new Error(response?.error || "Failed to start execution");
     }
-    
-    // Inject content script if not already loaded
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["content.js"]
-      });
-      logLine("Content script injected successfully");
-      // Minimal wait for content script to initialize
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch (injectErr) {
-      logLine("Warning: Could not inject content script: " + injectErr.message);
-      logLine("Trying to send message anyway (script may already be loaded)...");
-    }
-    
-    // Set up listener for execution completion (before sending message)
-    const completionListener = (message, sender, sendResponse) => {
-      if (message.type === "FLOW_EXECUTION_COMPLETE") {
+
+    // Status updates will come via EXECUTION_STATUS_UPDATE message
+    const statusListener = (message) => {
+      if (message.type === "EXECUTION_STATUS_UPDATE") {
         if (message.success) {
-          logLine(`Flow execution completed successfully (${message.stepCount || testCase.steps.length} steps)`);
+          logLine(
+            `Flow execution completed successfully (${message.stepCount} steps)`,
+          );
           agentStatus.textContent = "Ready";
           agentStatus.style.color = "#4ade80";
-        } else {
-          logLine(`Flow execution failed: ${message.error || "Unknown error"}`);
+          chrome.runtime.onMessage.removeListener(statusListener);
+        } else if (message.error) {
+          logLine(`Flow execution failed: ${message.error}`);
           agentStatus.textContent = "Error";
           agentStatus.style.color = "#ef4444";
+          chrome.runtime.onMessage.removeListener(statusListener);
+        } else if (message.status === "progress") {
+          // Optional: log progress
         }
-        chrome.runtime.onMessage.removeListener(completionListener);
       }
-      return false;
     };
-    
-    chrome.runtime.onMessage.addListener(completionListener);
-    
-    // Send steps to content script for execution
-    chrome.tabs.sendMessage(tab.id, {
-      type: "EXECUTE_STEPS",
-      steps: testCase.steps
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        const errorMsg = chrome.runtime.lastError.message;
-        logLine("Error: " + errorMsg);
-        logLine("Tip: Make sure you're on a regular webpage (not chrome:// pages) and refresh the page.");
-        agentStatus.textContent = "Error";
-        agentStatus.style.color = "#ef4444";
-        chrome.runtime.onMessage.removeListener(completionListener);
-        return;
-      }
-      
-      if (response && response.success) {
-        logLine("Flow execution started. Steps will execute in the background...");
-        // Don't change status yet - wait for completion message
-      } else {
-        logLine(`Failed to start execution: ${response?.error || "Unknown error"}`);
-        agentStatus.textContent = "Error";
-        agentStatus.style.color = "#ef4444";
-        chrome.runtime.onMessage.removeListener(completionListener);
-      }
-    });
+    chrome.runtime.onMessage.addListener(statusListener);
   } catch (err) {
-    console.error("Error running flow", err);
-    logLine("Error running flow: " + err.message);
+    console.error("Error starting flow", err);
+    logLine("Error starting flow: " + err.message);
     agentStatus.textContent = "Error";
     agentStatus.style.color = "#ef4444";
   }
@@ -431,10 +435,10 @@ async function onRunFlow() {
     logLine("Please select a flow first");
     return;
   }
-  
+
   // Get the test case (either from current display or load from backend)
   let testCase = null;
-  
+
   // Check if we have it in Chrome storage first
   const result = await chrome.storage.local.get([`flow_${selectedId}`]);
   if (result[`flow_${selectedId}`]) {
@@ -445,19 +449,20 @@ async function onRunFlow() {
     try {
       logLine(`Loading flow ID ${selectedId} from database...`);
       const res = await fetch(`${API_BASE_URL}/api/test-cases/${selectedId}`);
-      if (!res.ok) throw new Error(`Backend responded with status ${res.status}`);
+      if (!res.ok)
+        throw new Error(`Backend responded with status ${res.status}`);
       testCase = await res.json();
     } catch (err) {
       logLine("Error loading flow: " + err.message);
       return;
     }
   }
-  
+
   if (!testCase || !testCase.steps || testCase.steps.length === 0) {
     logLine("Flow has no steps to execute");
     return;
   }
-  
+
   // Run the flow
   await runFlow(testCase);
 }

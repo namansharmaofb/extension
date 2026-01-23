@@ -3,14 +3,8 @@
   "name": "Web Test Recorder",
   "version": "1.0.0",
   "description": "Record user interactions on web pages and send them as test cases to a backend.",
-  "permissions": [
-    "scripting",
-    "activeTab",
-    "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "permissions": ["scripting", "activeTab", "storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
