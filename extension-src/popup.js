@@ -43,7 +43,10 @@ function renderSteps(steps = []) {
     cmd.textContent = step.action || "";
 
     const target = document.createElement("td");
-    target.textContent = step.selector || "";
+    target.textContent = step.description || step.selector || "";
+    if (step.description && step.selector) {
+      target.title = step.selector;
+    }
 
     const value = document.createElement("td");
     value.textContent = step.value || "";
@@ -222,18 +225,24 @@ function onNewFlow() {
 
 function onSaveFlow() {
   const name = testNameInput.value.trim();
-  if (!name || !flowSelect) return;
-  let existing = Array.from(flowSelect.options).find(
-    (opt) => opt.value === name,
-  );
-  if (!existing) {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    flowSelect.appendChild(opt);
+  if (!name) {
+    alert("Please enter a flow name");
+    return;
   }
-  flowSelect.value = name;
-  logLine(`Flow '${name}' saved locally in this popup.`);
+
+  chrome.runtime.sendMessage({ type: "GET_STATE" }, async (state) => {
+    if (!state || !state.currentTestCase) {
+      logLine("No steps to save");
+      return;
+    }
+
+    const testCase = {
+      ...state.currentTestCase,
+      name: name,
+    };
+
+    await sendToBackend(testCase);
+  });
 }
 
 async function onDeleteFlow() {

@@ -25,10 +25,31 @@ async function executeCurrentStep() {
   const step = executionState.steps[executionState.currentIndex];
 
   try {
+    // Clear any previous timeout
+    if (executionState.stepTimeout) {
+      clearTimeout(executionState.stepTimeout);
+    }
+
+    // Set a timeout for this step (e.g. 10 seconds)
+    // If no frame responds with STEP_COMPLETE, we fail.
+    executionState.stepTimeout = setTimeout(() => {
+      finishExecution(
+        false,
+        `Timeout waiting for step ${executionState.currentIndex + 1}`,
+      );
+    }, 10000);
+
     const tab = await chrome.tabs.get(executionState.tabId);
 
     // Check if we need to navigate
-    if (step.url && normalizeUrl(tab.url) !== normalizeUrl(step.url)) {
+    // SKIP strict check for archive.org to avoid breaking out of iframes/rewrites,
+    // or if the URL is roughly the same.
+    const currentUrl = normalizeUrl(tab.url);
+    const stepUrl = normalizeUrl(step.url);
+
+    const isArchiveOrg = currentUrl.includes("web.archive.org");
+
+    if (step.url && currentUrl !== stepUrl && !isArchiveOrg) {
       console.log(`Step requires navigation to ${step.url}`);
       executionState.waitingForNavigation = true;
       await chrome.tabs.update(executionState.tabId, { url: step.url });
@@ -38,7 +59,7 @@ async function executeCurrentStep() {
     // Attempt to inject content script to ensure it's there
     try {
       await chrome.scripting.executeScript({
-        target: { tabId: executionState.tabId },
+        target: { tabId: executionState.tabId, allFrames: true },
         files: ["content.js"],
       });
     } catch (e) {
@@ -47,6 +68,8 @@ async function executeCurrentStep() {
     }
 
     // Send command to content script
+    // Note: We don't specify frameId, so it goes to ALL frames.
+    // We rely on the fact that only the frame with the element will succeed.
     chrome.tabs.sendMessage(
       executionState.tabId,
       {
@@ -59,20 +82,12 @@ async function executeCurrentStep() {
         if (chrome.runtime.lastError) {
           console.error("Msg Error:", chrome.runtime.lastError.message);
           // If content script is missing, maybe we should retry or fail?
-          // But we just injected it...
-
-          // Retry once after short delay?
-          setTimeout(() => {
-            // ... logic for retry could go here, but let's fail for now to be safe
-            finishExecution(
-              false,
-              "Lost connection to page: " + chrome.runtime.lastError.message,
-            );
-          }, 500);
+          // The timeout will catch it eventually.
         }
       },
     );
   } catch (err) {
+    if (executionState.stepTimeout) clearTimeout(executionState.stepTimeout);
     finishExecution(false, err.message);
   }
 }
@@ -108,6 +123,18 @@ function finishExecution(success, error = null) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // 1. Maintain recording state across reloads/navigation
+  if (isRecording && changeInfo.status === "complete" && tab.active) {
+    chrome.tabs
+      .sendMessage(tabId, {
+        type: "SET_RECORDING",
+        isRecording: true,
+      })
+      .catch(() => {
+        // Ignore errors if content script isn't ready yet or strictly not injectable
+      });
+  }
+
   if (
     executionState.isRunning &&
     tabId === executionState.tabId &&
@@ -148,23 +175,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "START_RECORDING") {
     isRecording = true;
     currentTestCase = { name: message.name || "Untitled Test", steps: [] };
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          type: "SET_RECORDING",
-          isRecording: true,
-        });
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const activeTab = tabs[0];
+      if (activeTab) {
+        try {
+          // 1. Ensure scripts are injected in all frames
+          await chrome.scripting
+            .executeScript({
+              target: { tabId: activeTab.id, allFrames: true },
+              files: ["content.js"],
+            })
+            .catch((e) => console.log("Injection skipped/failed:", e.message));
+
+          // 2. toggle state in ALL frames directly
+          await chrome.scripting.executeScript({
+            target: { tabId: activeTab.id, allFrames: true },
+            func: (state) => {
+              if (window.__recorder_toggle) {
+                window.__recorder_toggle(state);
+              }
+            },
+            args: [true], // isRecording = true
+          });
+
+          // Legacy/Backup: Send message to top frame (popup might rely on this return?)
+          // Actually, we just need to send response to the popup
+        } catch (err) {
+          console.error("Failed to start recording:", err);
+        }
       }
     });
     sendResponse({ success: true });
   } else if (message.type === "STOP_RECORDING") {
     isRecording = false;
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          type: "SET_RECORDING",
-          isRecording: false,
-        });
+        // Toggle state in ALL frames
+        await chrome.scripting
+          .executeScript({
+            target: { tabId: tabs[0].id, allFrames: true },
+            func: (state) => {
+              if (window.__recorder_toggle) {
+                window.__recorder_toggle(state);
+              }
+            },
+            args: [false],
+          })
+          .catch(() => {});
       }
     });
     sendResponse({ success: true, testCase: currentTestCase });

@@ -66,7 +66,7 @@ app.post("/api/test-cases", async (req, res) => {
 
     const [caseResult] = await conn.query(
       "INSERT INTO test_cases (name) VALUES (?)",
-      [name]
+      [name],
     );
 
     const testCaseId = caseResult.insertId;
@@ -87,7 +87,7 @@ app.post("/api/test-cases", async (req, res) => {
         `INSERT INTO test_steps
           (test_case_id, step_order, action, selector, tag_name, value, url, timestamp)
          VALUES ?`,
-        [stepValues]
+        [stepValues],
       );
     }
 
@@ -105,7 +105,9 @@ app.post("/api/test-cases", async (req, res) => {
 
 app.get("/api/test-cases", async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT * FROM test_cases ORDER BY created_at DESC");
+    const [rows] = await pool.query(
+      "SELECT * FROM test_cases ORDER BY created_at DESC",
+    );
     res.json(rows);
   } catch (err) {
     console.error("Error fetching test cases", err);
@@ -118,13 +120,13 @@ app.get("/api/test-cases/:id", async (req, res) => {
   try {
     const [[testCase]] = await pool.query(
       "SELECT * FROM test_cases WHERE id = ?",
-      [id]
+      [id],
     );
     if (!testCase) return res.status(404).json({ error: "Not found" });
 
     const [steps] = await pool.query(
       "SELECT * FROM test_steps WHERE test_case_id = ? ORDER BY step_order ASC",
-      [id]
+      [id],
     );
 
     res.json({ ...testCase, steps });
@@ -143,7 +145,7 @@ app.delete("/api/test-cases/:id", async (req, res) => {
     // Check if test case exists
     const [[testCase]] = await conn.query(
       "SELECT * FROM test_cases WHERE id = ?",
-      [id]
+      [id],
     );
     if (!testCase) {
       await conn.rollback();
@@ -158,7 +160,10 @@ app.delete("/api/test-cases/:id", async (req, res) => {
 
     await conn.commit();
 
-    res.json({ success: true, message: `Test case '${testCase.name}' deleted successfully` });
+    res.json({
+      success: true,
+      message: `Test case '${testCase.name}' deleted successfully`,
+    });
   } catch (err) {
     await conn.rollback();
     console.error("Error deleting test case", err);
