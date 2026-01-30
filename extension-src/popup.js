@@ -178,8 +178,21 @@ function onRecordClick() {
 
     if (!currentlyRecording) {
       const nameFromInput = testNameInput.value.trim();
-      const selectedFlowName =
-        (flowSelect && flowSelect.value) || nameFromInput || "Untitled Flow";
+      let selectedFlowName = nameFromInput;
+
+      if (!selectedFlowName && flowSelect && flowSelect.value) {
+        // If user selected a flow from dropdown, reuse that name (overwrite)
+        selectedFlowName = flowSelect.options[flowSelect.selectedIndex].text;
+      }
+
+      if (!selectedFlowName) {
+        // Auto-generate unique name
+        const now = new Date();
+        // Format: Flow HH:MM:SS
+        const timeString = now.toLocaleTimeString([], { hour12: false });
+        selectedFlowName = `Flow ${timeString}`;
+      }
+
       testNameInput.value = selectedFlowName;
 
       chrome.runtime.sendMessage(
@@ -198,10 +211,14 @@ function onRecordClick() {
           setUI(false);
           const testCase = res.testCase || {};
           if (!testCase.name) {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString([], { hour12: false });
             testCase.name =
               testNameInput.value.trim() ||
-              (flowSelect && flowSelect.value) ||
-              "Untitled Flow";
+              (flowSelect && flowSelect.value
+                ? flowSelect.options[flowSelect.selectedIndex].text
+                : "") ||
+              `Flow ${timeString}`;
           }
           renderSteps(testCase.steps || []);
           logLine(
@@ -350,7 +367,7 @@ async function onFlowSelect() {
         logLine(
           `Loaded flow '${cachedFlow.name}' from local cache (${cachedFlow.steps?.length || 0} steps)`,
         );
-        await runFlow(cachedFlow);
+        // Don't auto-run - user must click "Run Flow" button
       } else {
         logLine(
           "Flow not found in local cache. Please ensure backend is running and try again.",

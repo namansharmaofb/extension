@@ -44,6 +44,95 @@ function updateVisualIndicator(active) {
   }
 }
 
+function getXPath(element) {
+  try {
+    if (!element) return "";
+    if (element.id && !isDynamicId(element.id))
+      return `//*[@id="${element.id}"]`;
+    if (element === document.body) return "/html/body";
+    if (
+      !element.parentNode ||
+      element.parentNode.nodeType !== Node.ELEMENT_NODE
+    )
+      return ""; // Safety break
+
+    let ix = 0;
+    const siblings = element.parentNode.childNodes;
+    for (let i = 0; i < siblings.length; i++) {
+      const sibling = siblings[i];
+      if (sibling === element) {
+        const parentPath = getXPath(element.parentNode);
+        return parentPath
+          ? `${parentPath}/${element.tagName.toLowerCase()}[${ix + 1}]`
+          : "";
+      }
+      if (sibling.nodeType === 1 && sibling.tagName === element.tagName) {
+        ix++;
+      }
+    }
+  } catch (e) {
+    return ""; // Fail gracefully
+  }
+  return "";
+}
+
+function generateSelectors(element) {
+  if (!element) return null;
+
+  try {
+    const css = buildSelector(element);
+    const selectors = {
+      css: css,
+      xpath: getXPath(element),
+      id: element.id && !isDynamicId(element.id) ? element.id : null,
+      attributes: {},
+    };
+
+    // Capture stable attributes
+    const stableAttrs = [
+      "data-testid",
+      "data-cy",
+      "data-test-id",
+      "data-qa",
+      "name",
+      "role",
+      "placeholder",
+      "aria-label",
+      "type",
+      "href",
+    ];
+
+    for (const attr of stableAttrs) {
+      if (element.hasAttribute(attr)) {
+        const val = element.getAttribute(attr);
+        if (val && !isDynamicId(val)) {
+          selectors.attributes[attr] = val;
+        }
+      }
+    }
+
+    // Capture inner text if short and clean
+    const text = getVisibleText(element);
+    if (text && text.length < 30) {
+      selectors.innerText = text;
+    }
+
+    return selectors;
+  } catch (err) {
+    console.error(
+      "Error generating advanced selectors, falling back to CSS:",
+      err,
+    );
+    // FALLBACK: Return just the CSS selector to ensure we record SOMETHING
+    return {
+      css: buildSelector(element),
+      xpath: null,
+      id: null,
+      attributes: {},
+    };
+  }
+}
+
 function buildSelector(element) {
   if (!element) return "";
 
@@ -112,7 +201,7 @@ function buildSelector(element) {
     // 2. Check other stable attributes on ancestors
     let foundStableAttr = false;
     for (const attr of stableAttrs) {
-      if (current.hasAttribute(attr)) {
+      if (current && current.hasAttribute(attr)) {
         const val = current.getAttribute(attr);
         if (val && !isDynamicId(val)) {
           // We found a stable root!
@@ -203,19 +292,17 @@ function getElementDescriptor(element) {
 function handleClick(event) {
   try {
     if (!isRecording) return;
+    // Don't record clicks on the recorder UI itself if we had one injected
+    if (event.target.hasAttribute("data-recorder-ui")) return;
 
     const target = event.target;
-    // Enhanced error handling for descriptor generation
-    let descriptor = "";
-    try {
-      descriptor = getElementDescriptor(target);
-    } catch (e) {
-      console.error("Error generating descriptor:", e);
-    }
+    const selectors = generateSelectors(target);
+    const descriptor = getElementDescriptor(target);
 
     const step = {
       action: "click",
-      selector: buildSelector(target),
+      selectors: selectors,
+      selector: selectors.css, // Backward compat
       tagName: target.tagName,
       description: descriptor,
       url: window.location.href,
@@ -240,17 +327,13 @@ function handleInput(event) {
     )
       return;
 
-    // Enhanced error handling
-    let descriptor = "";
-    try {
-      descriptor = getElementDescriptor(target);
-    } catch (e) {
-      console.error("Error generating descriptor:", e);
-    }
+    const selectors = generateSelectors(target);
+    const descriptor = getElementDescriptor(target);
 
     const step = {
       action: "input",
-      selector: buildSelector(target),
+      selectors: selectors,
+      selector: selectors.css, // Backward compat
       tagName: target.tagName,
       value: target.value,
       description: descriptor,
@@ -263,97 +346,121 @@ function handleInput(event) {
   }
 }
 
+// Register event listeners (CRITICAL - without this, nothing gets recorded!)
 if (!window.__recorder_listeners_added) {
   window.addEventListener("click", handleClick, true);
   window.addEventListener("change", handleInput, true);
   window.addEventListener("input", handleInput, true);
   window.__recorder_listeners_added = true;
+  console.log("Recorder event listeners registered");
 }
 
-function findElementBySelector(
-  selector,
-  description = "",
-  tagName = "",
-  retries = 3,
-) {
-  if (!selector) return null;
+function getElementsByXPath(xpath) {
+  const result = [];
+  try {
+    const nodes = document.evaluate(
+      xpath,
+      document,
+      null,
+      XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+      null,
+    );
+    for (let i = 0; i < nodes.snapshotLength; i++) {
+      result.push(nodes.snapshotItem(i));
+    }
+  } catch (err) {
+    // XPath match failed
+  }
+  return result;
+}
 
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      // 1. Try direct querySelector first (most common case)
-      const element = document.querySelector(selector);
-      if (element && element.isConnected) return element;
+function locateElement(step) {
+  const { selectors, selector, tagName, description, attributes } = step;
 
-      // 2. If description/text is available, try to find by text
-      if (description) {
-        // Tag hint helps narrow down search
-        const candidates = tagName
-          ? document.getElementsByTagName(tagName)
-          : document.querySelectorAll("*");
+  // Strategy 1: Smart Selectors (CSS)
+  if (selectors && selectors.css) {
+    const el = document.querySelector(selectors.css);
+    if (el && el.isConnected) return el;
+  }
+  // Fallback to legacy field
+  if (selector) {
+    const el = document.querySelector(selector);
+    if (el && el.isConnected) return el;
+  }
 
-        for (const candidate of candidates) {
-          // Skip hidden elements if possible?
-          if (
-            candidate.innerText === description ||
-            candidate.getAttribute("aria-label") === description ||
-            candidate.getAttribute("placeholder") === description ||
-            getVisibleText(candidate) === description
-          ) {
-            if (candidate.isConnected) return candidate;
-          }
-        }
+  // Strategy 2: ID
+  if (selectors && selectors.id) {
+    const el = document.getElementById(selectors.id);
+    if (el && el.isConnected) return el;
+  }
 
-        // Partial match fallback?
-        for (const candidate of candidates) {
-          if (getVisibleText(candidate).includes(description)) {
-            if (candidate.isConnected) return candidate;
-          }
-        }
+  // Strategy 3: Attributes
+  if (selectors && selectors.attributes) {
+    for (const [attr, val] of Object.entries(selectors.attributes)) {
+      try {
+        const el = document.querySelector(`[${attr}="${val}"]`);
+        if (el && el.isConnected) return el;
+      } catch (e) {
+        // Ignore invalid selectors
       }
+    }
+  }
+  // Backward compat for attributes from step root
+  if (attributes) {
+    for (const [attr, val] of Object.entries(attributes)) {
+      try {
+        const el = document.querySelector(`[${attr}="${val}"]`);
+        if (el && el.isConnected) return el;
+      } catch (e) {}
+    }
+  }
 
-      // 3. If selector has " > ", try splitting and navigating (heuristic)
-      if (selector.includes(" > ")) {
-        const parts = selector.split(" > ").map((p) => p.trim());
-        let current = document;
+  // Strategy 4: XPath
+  if (selectors && selectors.xpath) {
+    const els = getElementsByXPath(selectors.xpath);
+    if (els.length > 0 && els[0].isConnected) return els[0];
+  }
 
-        for (const part of parts) {
-          if (!current) break;
-          const found = current.querySelector
-            ? current.querySelector(part)
-            : null;
-          if (found) {
-            current = found;
-          } else {
-            current = null;
-            break;
-          }
-        }
+  // Strategy 5: Text/Description Fallback
+  if (description || (selectors && selectors.innerText)) {
+    const textToMatch = selectors?.innerText || description;
+    const candidates = tagName
+      ? document.getElementsByTagName(tagName)
+      : document.querySelectorAll("*");
 
-        if (current && current instanceof Element && current.isConnected) {
-          return current;
-        }
-      }
-
-      // Try with slight delay if not found (for dynamic content)
-      if (attempt < retries - 1) {
-        // Small delay before retry
-        const start = Date.now();
-        while (Date.now() - start < 50) {} // 50ms wait
-      }
-    } catch (err) {
-      console.error(
-        `Error finding element (attempt ${attempt + 1}):`,
-        selector,
-        err,
-      );
-      if (attempt < retries - 1) {
-        const start = Date.now();
-        while (Date.now() - start < 50) {} // 50ms wait
-      }
+    for (const candidate of candidates) {
+      const visText = getVisibleText(candidate);
+      if (visText === textToMatch) return candidate;
+      // Partial match for lengthy text
+      if (textToMatch.length > 5 && visText.includes(textToMatch))
+        return candidate;
     }
   }
 
   return null;
+}
+
+function isElementVisible(element) {
+  if (!element) return false;
+  if (!element.isConnected) return false;
+
+  // Check if element or any parent is hidden
+  const style = window.getComputedStyle(element);
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    style.opacity === "0"
+  ) {
+    return false;
+  }
+
+  // Check if element has dimensions
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) {
+    return false;
+  }
+
+  return true;
 }
 
 function highlightElement(element) {
@@ -373,17 +480,32 @@ function highlightElement(element) {
 // Single step execution for robust background-driven flow
 async function executeSingleStep(step, index) {
   try {
-    // Find element with retries
-    let element = findElementBySelector(
-      step.selector,
-      step.description,
-      step.tagName,
-      3,
-    );
+    // Enhanced Retry Loop with visibility check
+    // For dynamic elements (tooltips, dropdowns), we need to wait longer
+    let element = null;
+    const maxAttempts = 20; // 20 attempts
+    const waitTime = 250; // 250ms between attempts = 5 seconds total
+
+    for (let i = 0; i < maxAttempts; i++) {
+      element = locateElement(step);
+
+      // Check if element is not only found but also visible
+      if (element && isElementVisible(element)) {
+        break;
+      }
+
+      // Log progress for debugging
+      if (i === 0) {
+        console.log(`Step ${index + 1}: Waiting for element to appear...`);
+      }
+
+      element = null; // Reset if not visible
+      await new Promise((r) => setTimeout(r, waitTime));
+    }
 
     if (!element) {
       throw new Error(
-        `Element not found for selector: ${step.selector} (and text fallback failed)`,
+        `Element not found or not visible for step:${index + 1} (${step.action})`,
       );
     }
 
@@ -396,23 +518,14 @@ async function executeSingleStep(step, index) {
       });
       await new Promise((r) => setTimeout(r, 50));
 
-      if (!element.isConnected) {
-        element = findElementBySelector(
-          step.selector,
-          step.description,
-          step.tagName,
-          2,
-        );
-        if (!element) throw new Error("Element disconnected");
-      }
-
       highlightElement(element);
-      await new Promise((r) => setTimeout(r, 500)); // Wait for visual confirmation
+      await new Promise((r) => setTimeout(r, 100)); // Quick visual confirmation
 
       element.click();
-      console.log(`Executed step ${index + 1}: Click`);
+      console.log(
+        `Executed step ${index + 1}: Click in frame ${window.location.href}`,
+      );
 
-      // Send completion immediately. If page unloads, background handles it.
       chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
     } else if (step.action === "input") {
       element.scrollIntoView({
@@ -422,25 +535,30 @@ async function executeSingleStep(step, index) {
       });
       element.focus();
       highlightElement(element);
-      await new Promise((r) => setTimeout(r, 500)); // Wait for visual confirmation
+      await new Promise((r) => setTimeout(r, 300)); // Visual confirmation
 
+      // Try to maintain existing value if appending? No, replace for now.
       element.value = step.value || "";
       element.dispatchEvent(new Event("input", { bubbles: true }));
       element.dispatchEvent(new Event("change", { bubbles: true }));
 
-      console.log(`Executed step ${index + 1}: Input "${step.value}"`);
+      console.log(
+        `Executed step ${index + 1}: Input "${step.value}" in frame ${window.location.href}`,
+      );
       chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
     }
   } catch (err) {
     // In a multi-frame environment, "Element not found" will happen in N-1 frames.
-    // We should not fail the whole test immediately if one frame can't find it.
-    // The background script will handle timeout if NO frame finds it.
     const isNotFoundError = err.message.includes("Element not found");
 
     if (isNotFoundError) {
-      console.log(`Frame skipped step ${index + 1}: Element not found`);
-      // Do NOT send STEP_ERROR for not found, wait for timeout or success from other frame
+      // Element not in this frame - this is expected in multi-frame scenarios
+      console.log(
+        `Step ${index + 1}: Element not found in this frame (${window.location.href})`,
+      );
+      // Don't send error - let other frames try
     } else {
+      // Actual error (not just "not found")
       console.error(`Error executing step ${index + 1}:`, err);
       chrome.runtime.sendMessage({
         type: "STEP_ERROR",

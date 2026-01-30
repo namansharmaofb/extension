@@ -24,20 +24,27 @@ async function executeCurrentStep() {
 
   const step = executionState.steps[executionState.currentIndex];
 
+  console.log(
+    `Executing step ${executionState.currentIndex + 1}/${executionState.steps.length}: ${step.action} on ${step.description || step.selector}`,
+  );
+
   try {
     // Clear any previous timeout
     if (executionState.stepTimeout) {
       clearTimeout(executionState.stepTimeout);
     }
 
-    // Set a timeout for this step (e.g. 10 seconds)
+    // Set a timeout for this step (30 seconds for reliability with slow pages)
     // If no frame responds with STEP_COMPLETE, we fail.
     executionState.stepTimeout = setTimeout(() => {
+      console.error(
+        `Timeout waiting for step ${executionState.currentIndex + 1}/${executionState.steps.length}`,
+      );
       finishExecution(
         false,
         `Timeout waiting for step ${executionState.currentIndex + 1}`,
       );
-    }, 10000);
+    }, 30000);
 
     const tab = await chrome.tabs.get(executionState.tabId);
 
@@ -59,7 +66,7 @@ async function executeCurrentStep() {
     // Attempt to inject content script to ensure it's there
     try {
       await chrome.scripting.executeScript({
-        target: { tabId: executionState.tabId, allFrames: true },
+        target: { tabId: executionState.tabId},
         files: ["content.js"],
       });
     } catch (e) {
@@ -164,6 +171,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         console.log(
           "Detected page load during click step. Assuming success and moving next.",
         );
+        // CRITICAL: Clear the timeout before advancing to prevent race condition
+        if (executionState.stepTimeout) {
+          clearTimeout(executionState.stepTimeout);
+          executionState.stepTimeout = null;
+        }
         executionState.currentIndex++;
         setTimeout(() => executeCurrentStep(), 1000);
       }
@@ -251,12 +263,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
   } else if (message.type === "STEP_COMPLETE") {
     if (executionState.isRunning) {
+      // Clear the timeout to prevent false timeout errors
+      if (executionState.stepTimeout) {
+        clearTimeout(executionState.stepTimeout);
+        executionState.stepTimeout = null;
+      }
       executionState.currentIndex++;
       executeCurrentStep();
     }
     sendResponse({ success: true });
   } else if (message.type === "STEP_ERROR") {
     if (executionState.isRunning) {
+      // Clear the timeout before finishing execution
+      if (executionState.stepTimeout) {
+        clearTimeout(executionState.stepTimeout);
+        executionState.stepTimeout = null;
+      }
       finishExecution(false, message.error);
     }
     sendResponse({ success: true });
