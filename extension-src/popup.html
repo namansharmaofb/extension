@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -9,11 +9,15 @@
       }
 
       body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
           sans-serif;
         margin: 0;
         padding: 8px 10px;
-        width: 360px;
+        width: 450px;
         background: #020617;
         color: #e5e7eb;
       }
@@ -22,7 +26,7 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
-        font-size: 12px;
+        font-size: 14px;
       }
 
       .header {
@@ -33,12 +37,12 @@
       }
 
       .header-title {
-        font-size: 14px;
+        font-size: 16px;
         font-weight: 600;
       }
 
       .header-status {
-        font-size: 11px;
+        font-size: 12px;
         color: #4ade80;
       }
 
@@ -54,7 +58,7 @@
         justify-content: space-between;
         align-items: center;
         margin-bottom: 4px;
-        font-size: 11px;
+        font-size: 13px;
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: #9ca3af;
@@ -76,19 +80,19 @@
         border: 1px solid #1f2937;
         background: #020617;
         color: #e5e7eb;
-        font-size: 11px;
+        font-size: 13px;
       }
 
       button {
         border: none;
         border-radius: 999px;
         cursor: pointer;
-        font-size: 11px;
         padding: 4px 10px;
         font-weight: 500;
         background: #111827;
         color: #e5e7eb;
         white-space: nowrap;
+        font-size: 13px;
       }
 
       button.primary {
@@ -114,55 +118,230 @@
         cursor: default;
       }
 
-      .steps-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 11px;
+      .steps-empty {
+        font-size: 13px;
+        color: #6b7280;
+        padding: 12px 0;
+        text-align: center;
       }
 
-      .steps-table th,
-      .steps-table td {
-        padding: 3px 4px;
-        border-bottom: 1px solid #111827;
+      /* Compact Table for Selenium look */
+      .steps-table thead {
+        position: sticky;
+        top: 0;
+        background: #0f172a;
+        z-index: 10;
       }
 
       .steps-table th {
-        text-align: left;
-        color: #9ca3af;
-        font-weight: 500;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748b;
+        border-bottom: 2px solid #1e293b;
       }
 
-      .steps-empty {
-        font-size: 11px;
-        color: #6b7280;
-        padding: 2px 0;
+      .steps-table td {
+        border-bottom: 1px solid #1e293b;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+
+      .steps-table tr:hover:not(.steps-empty-row) {
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .selected-row {
+        background: rgba(59, 130, 246, 0.15) !important;
+      }
+
+      .selected-row td {
+        color: #60a5fa;
       }
 
       .logs {
         background: #020617;
         border-radius: 4px;
-        border: 1px solid #111827;
-        padding: 4px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        border: 1px solid #1f2937;
+        padding: 6px;
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
           "Liberation Mono", "Courier New", monospace;
-        font-size: 10px;
-        max-height: 110px;
+        font-size: 11px;
+        max-height: 180px;
         overflow-y: auto;
-        white-space: pre-wrap;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .log-entry {
+        padding: 2px 4px;
+        border-radius: 2px;
+        border-left: 3px solid transparent;
+        line-height: 1.4;
+      }
+
+      .log-entry .ts {
+        color: #6b7280;
+        margin-right: 6px;
+        font-size: 10px;
+      }
+
+      .log-info {
+        border-left-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.05);
+      }
+
+      .log-success {
+        border-left-color: #22c55e;
+        background: rgba(34, 197, 94, 0.05);
+        color: #4ade80;
+      }
+
+      .log-error {
+        border-left-color: #ef4444;
+        background: rgba(239, 68, 68, 0.05);
+        color: #f87171;
+      }
+
+      .editable-cell {
+        cursor: text;
+        transition: background 0.2s;
+        border-radius: 2px;
+        padding: 2px 4px !important;
+      }
+
+      .editable-cell:hover {
+        background: rgba(255, 255, 255, 0.05);
+        outline: 1px dashed #3b82f6;
+      }
+
+      .editable-cell:focus {
+        background: rgba(255, 255, 255, 0.1);
+        outline: 2px solid #3b82f6;
+        color: white;
+      }
+
+      [contenteditable="true"]:empty:before {
+        content: attr(placeholder);
+        color: #4b5563;
+        font-style: italic;
       }
 
       .status-text {
-        font-size: 11px;
+        font-size: 13px;
         margin-top: 2px;
         color: #6ee7b7;
+      }
+
+      /* Edit Panel */
+      .edit-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px;
+        background: #0f172a;
+        border-top: 1px solid #1e293b;
+      }
+
+      .edit-row {
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .edit-row label {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #1e293b;
+        background: #0f172a;
+      }
+
+      .tab {
+        padding: 6px 16px;
+        font-size: 12px;
+        cursor: pointer;
+        color: #64748b;
+        border-bottom: 2px solid transparent;
+      }
+
+      .tab.active {
+        color: #60a5fa;
+        border-bottom-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.05);
+      }
+
+      /* Status Indicators */
+      .status-badge {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        background: rgba(30, 41, 59, 0.5);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        border: 1px solid #1e293b;
+      }
+
+      .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #64748b;
+      }
+
+      .status-dot.online {
+        background: #22c55e;
+        box-shadow: 0 0 4px #22c55e;
+      }
+
+      .status-dot.offline {
+        background: #ef4444;
+        box-shadow: 0 0 4px #ef4444;
+      }
+
+      #statusText {
+        font-size: 11px;
+        color: #94a3b8;
+        font-style: italic;
+        margin-top: 4px;
+        text-align: center;
       }
     </style>
   </head>
   <body>
     <div class="panel">
       <div class="header">
-        <div class="header-title">Automation Agent</div>
-        <div class="header-status" id="agentStatus">Ready</div>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <div class="header-title">Automation Agent</div>
+          <button
+            id="popoutBtn"
+            style="
+              background: none;
+              padding: 2px;
+              font-size: 14px;
+              color: #64748b;
+            "
+            title="Open in separate window"
+          >
+            ❐
+          </button>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center">
+          <div class="status-badge" id="backendBadge">
+            <div class="status-dot" id="backendDot"></div>
+            <span id="backendText">CHECKING</span>
+          </div>
+          <div class="header-status" id="agentStatus">Ready</div>
+        </div>
       </div>
 
       <!-- FLOWS -->
@@ -180,64 +359,217 @@
             placeholder="New flow name"
             autocomplete="off"
           />
-          <button id="newFlowBtn">+ New Flow</button>
-          <button id="saveFlowBtn">Save Flow</button>
-          <button id="deleteFlowBtn" class="danger">🗑 Delete Flow</button>
-        </div>
-      </div>
-
-      <!-- RECORDING -->
-      <div class="card">
-        <div class="card-header">
-          <span>Recording</span>
-        </div>
-        <div class="card-body">
           <button id="recordBtn" class="primary">● Record</button>
-          <button id="aiStepBtn" disabled>+ AI Step</button>
-          <div class="status-text" id="statusText">Idle</div>
         </div>
+        <div class="card-body" style="padding-top: 0; margin-top: -2px">
+          <button id="newFlowBtn" style="font-size: 11px">+ New</button>
+          <button id="saveFlowBtn" style="font-size: 11px">Save</button>
+          <button id="deleteFlowBtn" class="danger" style="font-size: 11px">
+            🗑 Delete
+          </button>
+          <button id="runFlowBtn" class="primary" style="font-size: 11px">
+            ▶ Run
+          </button>
+          <button
+            id="stopExecutionBtn"
+            class="danger"
+            style="display: none; font-size: 11px"
+          >
+            ■ Stop
+          </button>
+          <button id="exportCodeBtn" style="font-size: 11px">⤓ Export</button>
+          <button id="exportJsonBtn" style="font-size: 11px">⤓ JSON</button>
+          <button id="uploadJsonBtn" style="font-size: 11px">⤒ Upload</button>
+          <input
+            type="file"
+            id="jsonInput"
+            style="display: none"
+            accept=".json"
+          />
+        </div>
+        <div id="statusText">Idle</div>
       </div>
 
-      <!-- EXECUTION -->
-      <div class="card">
-        <div class="card-header">
-          <span>Execution</span>
-        </div>
-        <div class="card-body">
-          <button id="runFlowBtn" class="primary">▶ Run Flow</button>
-        </div>
-      </div>
-
-      <!-- STEPS -->
-      <div class="card">
-        <div class="card-header">
-          <span>Steps</span>
-        </div>
-        <div>
-          <table class="steps-table">
+      <!-- STEPS & EDITOR -->
+      <div
+        class="card"
+        style="
+          padding: 0;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          height: 380px;
+        "
+      >
+        <div style="flex: 1; overflow-y: auto">
+          <table
+            class="steps-table"
+            style="width: 100%; border-collapse: collapse"
+          >
             <thead>
               <tr>
-                <th>#</th>
-                <th>Command</th>
-                <th>Target</th>
-                <th>Value</th>
+                <th style="width: 30px; padding: 6px">#</th>
+                <th style="padding: 6px">Command</th>
+                <th style="padding: 6px">Target</th>
+                <th style="padding: 6px">Value</th>
               </tr>
             </thead>
             <tbody id="stepsBody">
-              <tr>
+              <tr class="steps-empty-row">
                 <td colspan="4" class="steps-empty">No steps recorded yet.</td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <!-- EDIT PANEL (Selenium Style) -->
+        <div class="edit-panel" id="editPanel">
+          <div class="edit-row">
+            <label>Command</label>
+            <select id="editCommand">
+              <option value="click">click</option>
+              <option value="input">type</option>
+              <option value="navigate">open</option>
+              <option value="assertText">assert text</option>
+              <option value="assertExists">assert element present</option>
+              <option value="scroll">scroll</option>
+              <option value="wait">wait</option>
+            </select>
+          </div>
+          <div class="edit-row">
+            <label>Target</label>
+            <div style="display: flex; gap: 4px">
+              <input
+                type="text"
+                id="editTarget"
+                placeholder="CSS Selector or URL"
+              />
+              <button
+                id="findBtn"
+                style="padding: 2px 6px; background: #1e293b"
+                title="Find element on page"
+              >
+                🔍
+              </button>
+            </div>
+          </div>
+          <div class="edit-row">
+            <label>Value</label>
+            <input type="text" id="editValue" placeholder="Value or Position" />
+          </div>
+          <div class="edit-row">
+            <label>Description</label>
+            <input
+              type="text"
+              id="editDescription"
+              placeholder="Step description"
+            />
+          </div>
+          <div
+            style="
+              display: flex;
+              gap: 6px;
+              margin-top: 8px;
+              justify-content: flex-end;
+            "
+          >
+            <button
+              id="moveUpBtn"
+              style="padding: 2px 8px; background: #1e293b"
+              title="Move Up"
+            >
+              ↑
+            </button>
+            <button
+              id="moveDownBtn"
+              style="padding: 2px 8px; background: #1e293b"
+              title="Move Down"
+            >
+              ↓
+            </button>
+            <button
+              id="deleteStepBtn"
+              class="danger"
+              style="padding: 2px 8px"
+              title="Delete Selected Step"
+            >
+              🗑
+            </button>
+          </div>
+        </div>
       </div>
 
-      <!-- EXECUTION LOGS -->
-      <div class="card">
-        <div class="card-header">
-          <span>Execution Logs</span>
+      <!-- TABS & LOGS -->
+      <div
+        style="
+          height: 180px;
+          display: flex;
+          flex-direction: column;
+          border: 1px solid #1e293b;
+          border-radius: 4px;
+          overflow: hidden;
+        "
+      >
+        <div class="tabs">
+          <div class="tab active" data-tab="log">Log</div>
+          <div class="tab" data-tab="ref">Reference</div>
+          <div class="tab" data-tab="bugs">
+            Bugs
+            <span
+              id="bugCount"
+              style="
+                display: none;
+                background: #ef4444;
+                color: white;
+                border-radius: 50%;
+                padding: 0 4px;
+                font-size: 9px;
+                margin-left: 2px;
+              "
+              >0</span
+            >
+          </div>
         </div>
-        <div class="logs" id="logs"></div>
+        <div
+          id="logContent"
+          style="
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          "
+        >
+          <div class="logs" id="logs" style="flex: 1; border: none"></div>
+        </div>
+        <div
+          id="bugContent"
+          style="
+            flex: 1;
+            padding: 8px;
+            font-size: 11px;
+            color: #94a3b8;
+            display: none;
+            overflow-y: auto;
+            background: #020617;
+          "
+        >
+          <div id="bugList">No bugs detected.</div>
+        </div>
+        <div
+          id="refContent"
+          style="
+            flex: 1;
+            padding: 8px;
+            font-size: 11px;
+            color: #94a3b8;
+            display: none;
+            overflow-y: auto;
+          "
+        >
+          <div id="commandRef">
+            Select a command to see reference information.
+          </div>
+        </div>
       </div>
     </div>
 

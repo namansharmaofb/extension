@@ -3,7 +3,14 @@
   "name": "Web Test Recorder",
   "version": "1.0.0",
   "description": "Record user interactions on web pages and send them as test cases to a backend.",
-  "permissions": ["scripting", "activeTab", "storage", "tabs"],
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "storage",
+    "tabs",
+    "contextMenus",
+    "webNavigation"
+  ],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
@@ -15,7 +22,13 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": [
+        "utils.js",
+        "locator-builders.js",
+        "recorder.js",
+        "playback.js",
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": true

@@ -1,0 +1,11 @@
+{
+  "name": "e2e-runner",
+  "version": "1.0.0",
+  "description": "Daily E2E Runner",
+  "main": "runner.js",
+  "dependencies": {
+    "puppeteer": "^22.0.0",
+    "mysql2": "^3.9.0",
+    "dotenv": "^16.4.0"
+  }
+}

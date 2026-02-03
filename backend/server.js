@@ -8,12 +8,14 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
-// Configure your MySQL connection via env vars or defaults
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", service: "automation-backend" });
+});
+
+// Database Configuration
 const dbConfig = {
-  host: process.env.DB_HOST || "localhost",
+  socketPath: "/var/run/mysqld/mysqld.sock", // Use socket auth for passwordless root
   user: process.env.DB_USER || "root",
-  // Default to empty password so it works with local MySQL setups
-  // where the root user has no password configured.
   password: process.env.DB_PASSWORD ?? "",
   database: process.env.DB_NAME || "test_recorder",
 };
@@ -21,6 +23,18 @@ const dbConfig = {
 let pool;
 
 async function initDb() {
+  // Create connection without database selected to ensure DB exists
+  const tempConn = await mysql.createConnection({
+    socketPath: "/var/run/mysqld/mysqld.sock",
+    user: dbConfig.user,
+    password: dbConfig.password,
+  });
+
+  await tempConn.query(
+    `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`,
+  );
+  await tempConn.end();
+
   pool = await mysql.createPool({
     ...dbConfig,
     waitForConnections: true,
@@ -28,148 +42,497 @@ async function initDb() {
     queueLimit: 0,
   });
 
-  // Create tables if they do not exist
+  console.log("Database initialized. Setting up schemas...");
+
+  // 1. Projects
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS test_cases (
+    CREATE TABLE IF NOT EXISTS projects (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
+      url TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
+  // 2. Tests (Individual Test Cases)
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS test_steps (
+    CREATE TABLE IF NOT EXISTS tests (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      test_case_id INT NOT NULL,
-      step_order INT NOT NULL,
-      action VARCHAR(50) NOT NULL,
-      selector TEXT,
-      tag_name VARCHAR(50),
-      value TEXT,
-      url TEXT,
-      timestamp BIGINT,
-      FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE
+      project_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
   `);
+
+  // 3. Suites (Groups of Tests)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS suites (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 4. Suite Tests (Many-to-Many relationship)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS suite_tests (
+      suite_id INT NOT NULL,
+      test_id INT NOT NULL,
+      PRIMARY KEY (suite_id, test_id),
+      FOREIGN KEY (suite_id) REFERENCES suites(id) ON DELETE CASCADE,
+      FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 5. Commands (Steps within a test)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS commands (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      test_id INT NOT NULL,
+      step_order INT NOT NULL,
+      command VARCHAR(50) NOT NULL,
+      target TEXT,
+      targets JSON,
+      value TEXT,
+      description TEXT,
+      url TEXT,
+      timestamp BIGINT,
+      FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 6. Executions
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS executions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      test_id INT NOT NULL,
+      status VARCHAR(50) NOT NULL, -- 'success', 'failed', 'stopped'
+      duration INT, -- in milliseconds
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 7. Execution Reports (Bugs/Nuances)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS execution_reports (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      execution_id INT NOT NULL,
+      step_index INT,
+      type VARCHAR(50) NOT NULL, -- 'error', 'nuance'
+      message TEXT NOT NULL,
+      FOREIGN KEY (execution_id) REFERENCES executions(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Ensure 'targets' column exists (for existing tables)
+  try {
+    const [cols] = await pool.query(
+      "SHOW COLUMNS FROM commands LIKE 'targets'",
+    );
+    if (cols.length === 0) {
+      await pool.query(
+        "ALTER TABLE commands ADD COLUMN targets JSON AFTER target",
+      );
+      console.log("Added 'targets' column to 'commands' table.");
+    }
+  } catch (err) {
+    console.warn("Could not alter table commands:", err.message);
+  }
+
+  console.log("Schema check complete.");
+  await runMigrations();
 }
 
-app.post("/api/test-cases", async (req, res) => {
-  const { name, steps } = req.body || {};
+async function runMigrations() {
+  const [tables] = await pool.query("SHOW TABLES");
+  const tableNames = tables.map((t) => Object.values(t)[0]);
 
-  if (!name || !Array.isArray(steps)) {
-    return res.status(400).json({ error: "Missing 'name' or 'steps' array" });
+  // Migration: test_cases -> projects & tests
+  if (tableNames.includes("test_cases")) {
+    console.log("Legacy 'test_cases' found. Migrating to new schema...");
+
+    // Create Default Project if none exists
+    let [projects] = await pool.query("SELECT id FROM projects LIMIT 1");
+    let projectId;
+    if (projects.length === 0) {
+      const [res] = await pool.query("INSERT INTO projects (name) VALUES (?)", [
+        "Default Project",
+      ]);
+      projectId = res.insertId;
+    } else {
+      projectId = projects[0].id;
+    }
+
+    const [oldCases] = await pool.query("SELECT * FROM test_cases");
+    for (const oldCase of oldCases) {
+      // Check if already migrated
+      const [existing] = await pool.query(
+        "SELECT id FROM tests WHERE name = ? AND project_id = ?",
+        [oldCase.name, projectId],
+      );
+      if (existing.length === 0) {
+        const [testRes] = await pool.query(
+          "INSERT INTO tests (project_id, name, created_at) VALUES (?, ?, ?)",
+          [projectId, oldCase.name, oldCase.created_at],
+        );
+        const newTestId = testRes.insertId;
+
+        // Migrate steps -> commands
+        if (tableNames.includes("test_steps")) {
+          const [oldSteps] = await pool.query(
+            "SELECT * FROM test_steps WHERE test_case_id = ?",
+            [oldCase.id],
+          );
+          for (const step of oldSteps) {
+            // Generate basic Selenium-style target prefix
+            const targetWithPrefix = step.selector
+              ? `css=${step.selector}`
+              : step.url
+                ? `url=${step.url}`
+                : "";
+            const targets = step.selector
+              ? [[`css=${step.selector}`, "css:finder"]]
+              : [];
+
+            await pool.query(
+              `INSERT INTO commands 
+              (test_id, step_order, command, target, targets, value, description, url, timestamp) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                newTestId,
+                step.step_order,
+                step.action,
+                targetWithPrefix,
+                JSON.stringify(targets),
+                step.value,
+                step.action,
+                step.url,
+                step.timestamp,
+              ],
+            );
+          }
+        }
+      }
+    }
+    console.log("Migration finished.");
   }
+}
+
+// REST API Endpoints
+
+// Projects
+app.get("/api/projects", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM projects ORDER BY created_at DESC",
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/projects", async (req, res) => {
+  const { name, url } = req.body;
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO projects (name, url) VALUES (?, ?)",
+      [name, url || null],
+    );
+    res.json({ id: result.insertId, name, url });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Tests
+app.get("/api/projects/:id/tests", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM tests WHERE project_id = ? ORDER BY created_at DESC",
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/tests/:id", async (req, res) => {
+  try {
+    const [[test]] = await pool.query("SELECT * FROM tests WHERE id = ?", [
+      req.params.id,
+    ]);
+    if (!test) return res.status(404).json({ error: "Test not found" });
+
+    const [commands] = await pool.query(
+      "SELECT * FROM commands WHERE test_id = ? ORDER BY step_order ASC",
+      [req.params.id],
+    );
+    res.json({ ...test, steps: commands });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/projects/:id/tests", async (req, res) => {
+  const { name, steps } = req.body;
+  const project_id = req.params.id;
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    const [caseResult] = await conn.query(
-      "INSERT INTO test_cases (name) VALUES (?)",
-      [name],
+    const [testRes] = await conn.query(
+      "INSERT INTO tests (project_id, name) VALUES (?, ?)",
+      [project_id, name],
     );
+    const testId = testRes.insertId;
 
-    const testCaseId = caseResult.insertId;
+    if (steps && Array.isArray(steps)) {
+      const values = steps.map((s, i) => [
+        testId,
+        i + 1,
+        s.action || s.command,
+        s.target || s.selector,
+        JSON.stringify(s.targets || []),
+        s.value,
+        s.description || s.action,
+        s.url,
+        s.timestamp || Date.now(),
+      ]);
 
-    const stepValues = steps.map((step, index) => [
-      testCaseId,
-      index + 1,
-      step.action || null,
-      step.selector || null,
-      step.tagName || null,
-      step.value || null,
-      step.url || null,
-      step.timestamp || null,
-    ]);
-
-    if (stepValues.length > 0) {
-      await conn.query(
-        `INSERT INTO test_steps
-          (test_case_id, step_order, action, selector, tag_name, value, url, timestamp)
-         VALUES ?`,
-        [stepValues],
-      );
+      if (values.length > 0) {
+        await conn.query(
+          `INSERT INTO commands 
+          (test_id, step_order, command, target, targets, value, description, url, timestamp) 
+          VALUES ?`,
+          [values],
+        );
+      }
     }
 
     await conn.commit();
-
-    res.json({ id: testCaseId, name, stepCount: steps.length });
+    res.json({ id: testId, name, stepCount: steps ? steps.length : 0 });
   } catch (err) {
     await conn.rollback();
-    console.error("Error saving test case", err);
-    res.status(500).json({ error: "Failed to save test case" });
+    res.status(500).json({ error: err.message });
   } finally {
     conn.release();
   }
 });
 
+app.put("/api/tests/:id", async (req, res) => {
+  const { name, steps } = req.body;
+  const testId = req.params.id;
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    if (name) {
+      await conn.query("UPDATE tests SET name = ? WHERE id = ?", [
+        name,
+        testId,
+      ]);
+    }
+
+    if (steps && Array.isArray(steps)) {
+      // Clear old commands
+      await conn.query("DELETE FROM commands WHERE test_id = ?", [testId]);
+
+      const values = steps.map((s, i) => [
+        testId,
+        i + 1,
+        s.action || s.command,
+        s.target || s.selector,
+        JSON.stringify(s.targets || []),
+        s.value,
+        s.description || s.action,
+        s.url,
+        s.timestamp || Date.now(),
+      ]);
+
+      if (values.length > 0) {
+        await conn.query(
+          `INSERT INTO commands 
+          (test_id, step_order, command, target, targets, value, description, url, timestamp) 
+          VALUES ?`,
+          [values],
+        );
+      }
+    }
+
+    await conn.commit();
+    res.json({ success: true, id: testId });
+  } catch (err) {
+    await conn.rollback();
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// Legacy Support (Backward Compatibility for old popup.js)
 app.get("/api/test-cases", async (req, res) => {
   try {
+    // Return tests as test-cases
     const [rows] = await pool.query(
-      "SELECT * FROM test_cases ORDER BY created_at DESC",
+      "SELECT id, name, created_at FROM tests ORDER BY created_at DESC",
     );
     res.json(rows);
   } catch (err) {
-    console.error("Error fetching test cases", err);
-    res.status(500).json({ error: "Failed to fetch test cases" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/test-cases", async (req, res) => {
+  // Map to default project
+  let [projects] = await pool.query("SELECT id FROM projects LIMIT 1");
+  let projectId;
+  if (projects.length === 0) {
+    const [pRes] = await pool.query("INSERT INTO projects (name) VALUES (?)", [
+      "Default Project",
+    ]);
+    projectId = pRes.insertId;
+  } else {
+    projectId = projects[0].id;
+  }
+
+  // Forward to real implementation
+  req.params.id = projectId;
+  // Re-use logic from /api/projects/:id/tests
+  // (In a real app we'd extract this to a service layer)
+  const { name, steps } = req.body;
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [testRes] = await conn.query(
+      "INSERT INTO tests (project_id, name) VALUES (?, ?)",
+      [projectId, name],
+    );
+    const testId = testRes.insertId;
+    if (steps && Array.isArray(steps)) {
+      const values = steps.map((s, i) => [
+        testId,
+        i + 1,
+        s.action || s.command,
+        s.selector || s.target,
+        s.value,
+        s.description || s.action,
+        s.url,
+        s.timestamp || Date.now(),
+      ]);
+      if (values.length > 0)
+        await conn.query(
+          `INSERT INTO commands (test_id, step_order, command, target, value, description, url, timestamp) VALUES ?`,
+          [values],
+        );
+    }
+    await conn.commit();
+    res.json({ id: testId, name, stepCount: steps ? steps.length : 0 });
+  } catch (err) {
+    await conn.rollback();
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
 app.get("/api/test-cases/:id", async (req, res) => {
-  const { id } = req.params;
   try {
-    const [[testCase]] = await pool.query(
-      "SELECT * FROM test_cases WHERE id = ?",
-      [id],
+    const [[test]] = await pool.query("SELECT * FROM tests WHERE id = ?", [
+      req.params.id,
+    ]);
+    if (!test) return res.status(404).json({ error: "Not found" });
+    const [commands] = await pool.query(
+      "SELECT * FROM commands WHERE test_id = ? ORDER BY step_order ASC",
+      [req.params.id],
     );
-    if (!testCase) return res.status(404).json({ error: "Not found" });
-
-    const [steps] = await pool.query(
-      "SELECT * FROM test_steps WHERE test_case_id = ? ORDER BY step_order ASC",
-      [id],
-    );
-
-    res.json({ ...testCase, steps });
+    // Map back 'command' to 'action' and 'target' to 'selector' for old client
+    const mappedSteps = commands.map((c) => ({
+      ...c,
+      action: c.command,
+      selector: c.target,
+    }));
+    res.json({ ...test, steps: mappedSteps });
   } catch (err) {
-    console.error("Error fetching test case", err);
-    res.status(500).json({ error: "Failed to fetch test case" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.delete("/api/test-cases/:id", async (req, res) => {
-  const { id } = req.params;
+// Executions & Reports
+app.post("/api/tests/:id/executions", async (req, res) => {
+  const { status, duration, bugs } = req.body;
+  const testId = req.params.id;
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    // Check if test case exists
-    const [[testCase]] = await conn.query(
-      "SELECT * FROM test_cases WHERE id = ?",
-      [id],
+    const [execRes] = await conn.query(
+      "INSERT INTO executions (test_id, status, duration) VALUES (?, ?, ?)",
+      [testId, status, duration || 0],
     );
-    if (!testCase) {
-      await conn.rollback();
-      return res.status(404).json({ error: "Test case not found" });
+    const executionId = execRes.insertId;
+
+    if (bugs && Array.isArray(bugs) && bugs.length > 0) {
+      const bugValues = bugs.map((b) => [
+        executionId,
+        b.stepIndex,
+        b.type,
+        b.message,
+      ]);
+
+      await conn.query(
+        "INSERT INTO execution_reports (execution_id, step_index, type, message) VALUES ?",
+        [bugValues],
+      );
     }
 
-    // Delete steps first (foreign key constraint)
-    await conn.query("DELETE FROM test_steps WHERE test_case_id = ?", [id]);
-
-    // Delete test case
-    await conn.query("DELETE FROM test_cases WHERE id = ?", [id]);
-
     await conn.commit();
-
-    res.json({
-      success: true,
-      message: `Test case '${testCase.name}' deleted successfully`,
-    });
+    res.json({ success: true, executionId });
   } catch (err) {
     await conn.rollback();
-    console.error("Error deleting test case", err);
-    res.status(500).json({ error: "Failed to delete test case" });
+    res.status(500).json({ error: err.message });
   } finally {
     conn.release();
+  }
+});
+
+app.get("/api/tests/:id/executions", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM executions WHERE test_id = ? ORDER BY created_at DESC LIMIT 50",
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/executions/:id/report", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM execution_reports WHERE execution_id = ? ORDER BY step_index ASC",
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/test-cases/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM tests WHERE id = ?", [req.params.id]);
+    res.json({ success: true, message: "Test deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
