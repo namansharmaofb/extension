@@ -85,16 +85,23 @@ function isElementVisible(element) {
   if (!element.isConnected) return false;
 
   const style = window.getComputedStyle(element);
-  if (
-    style.display === "none" ||
-    style.visibility === "hidden" ||
-    style.opacity === "0"
-  ) {
-    return false;
+
+  // Custom styled radio/checkboxes are often obscured but interactive
+  const isRadioOrCheckbox =
+    element.tagName === "INPUT" &&
+    (element.type === "radio" || element.type === "checkbox");
+
+  // Truly hidden if display: none
+  if (style.display === "none") return false;
+
+  // For others, if opacity:0 or visibility:hidden, we often still want to allow it if it's a radio/checkbox
+  if (!isRadioOrCheckbox) {
+    if (style.visibility === "hidden" || style.opacity === "0") return false;
   }
 
   const rect = element.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) {
+  // Radio buttons often have 0x0 size when hidden but labels are clicked
+  if (!isRadioOrCheckbox && (rect.width === 0 || rect.height === 0)) {
     return false;
   }
 
@@ -208,4 +215,26 @@ function compareStates(oldState, newState) {
   }
 
   return nuances;
+}
+
+/**
+ * Finds an element even if it's inside many nested Shadow DOMs.
+ * @param {string} selector
+ * @param {Element|Document} root
+ * @returns {Element|null}
+ */
+function deepQuerySelector(selector, root = document) {
+  const element = root.querySelector(selector);
+  if (element) return element;
+
+  // Search in all shadow roots
+  const allElements = root.querySelectorAll('*');
+  for (const el of allElements) {
+    if (el.shadowRoot) {
+      const found = deepQuerySelector(selector, el.shadowRoot);
+      if (found) return found;
+    }
+  }
+
+  return null;
 }

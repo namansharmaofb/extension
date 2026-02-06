@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>E2E Testing Pipeline Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="app-container">
+      <header>
+        <div class="logo">
+          <span class="logo-icon">⚙️</span>
+          <h1>Automation <span>Pipeline</span></h1>
+        </div>
+        <div class="stats-bar">
+          <div class="stat-item" id="total-tests">
+            <span class="label">TOTAL TESTS</span>
+            <span class="value">0</span>
+          </div>
+          <div class="stat-item" id="success-rate">
+            <span class="label">SUCCESS RATE</span>
+            <span class="value">0%</span>
+          </div>
+          <div class="status-badge" id="service-status">
+            <span class="dot"></span> BACKEND ONLINE
+          </div>
+        </div>
+      </header>
+
+      <main class="factory-floor">
+        <!-- Left Station: User Session -->
+        <section class="station session-station" id="station-session">
+          <div class="station-header">
+            <span class="icon">👤</span>
+            <h2>User Session</h2>
+          </div>
+          <div class="station-content">
+            <div class="user-card">
+              <div class="user-avatar">?</div>
+              <div class="user-info">
+                <div class="user-email">vivek.sethia@ofbusiness.in</div>
+                <div class="session-status">Session Persistence Active</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Center: Testing Pipeline -->
+        <section class="station pipeline-station">
+          <div class="station-header">
+            <span class="icon">🚀</span>
+            <h2>Testing Pipeline</h2>
+          </div>
+          <div class="conveyor-belt">
+            <div class="belt-track"></div>
+            <div id="test-pipeline" class="test-queue">
+              <!-- Tests will be injected here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Station: Bug Reports -->
+        <section class="station bug-station">
+          <div class="station-header">
+            <span class="icon">🐛</span>
+            <h2>Bug Station</h2>
+          </div>
+          <div class="bug-list" id="bug-list">
+            <!-- Bugs will be injected here -->
+            <div class="no-bugs">No bugs detected. System clear.</div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <div class="footer-content">
+          <div class="last-updated">
+            Last Updated: <span id="last-update-time">--:--:--</span>
+          </div>
+          <div class="version">v1.2.0 - Automation Engine</div>
+        </div>
+      </footer>
+    </div>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

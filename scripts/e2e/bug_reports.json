@@ -1,0 +1,247 @@
+[
+  {
+    "id": "BUG-1770190622272",
+    "title": "Failure in Login_E2E",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_98_1770190622002.png",
+    "timestamp": "2026-02-04T07:37:02.272Z"
+  },
+  {
+    "id": "BUG-1770196150365",
+    "title": "Failure in Login_E2E",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_98_1770196150097.png",
+    "timestamp": "2026-02-04T09:09:10.365Z"
+  },
+  {
+    "id": "BUG-1770198304696",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_136_1770198304430.png",
+    "timestamp": "2026-02-04T09:45:04.696Z"
+  },
+  {
+    "id": "BUG-1770202386452",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_136_1770202386188.png",
+    "timestamp": "2026-02-04T10:53:06.452Z"
+  },
+  {
+    "id": "BUG-1770205120876",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_136_1770205120630.png",
+    "timestamp": "2026-02-04T11:38:40.876Z"
+  },
+  {
+    "id": "BUG-1770205710785",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_136_1770205710546.png",
+    "timestamp": "2026-02-04T11:48:30.785Z"
+  },
+  {
+    "id": "BUG-1770206017219",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_136_1770206016892.png",
+    "timestamp": "2026-02-04T11:53:37.219Z"
+  },
+  {
+    "id": "BUG-1770208210646",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_138_1770208210391.png",
+    "timestamp": "2026-02-04T12:30:10.646Z"
+  },
+  {
+    "id": "BUG-1770265822778",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_138_1770265822509.png",
+    "timestamp": "2026-02-05T04:30:22.778Z"
+  },
+  {
+    "id": "BUG-1770265978905",
+    "title": "Failure in PO_orderFlow",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_96_1770265978639.png",
+    "timestamp": "2026-02-05T04:32:58.905Z"
+  },
+  {
+    "id": "BUG-1770266214439",
+    "title": "Failure in PO_orderFlow",
+    "description": "Timeout waiting for step 2 (60s limit)",
+    "screenshot": "screenshots/error_140_1770266214097.png",
+    "timestamp": "2026-02-05T04:36:54.439Z"
+  },
+  {
+    "id": "BUG-1770285891190",
+    "title": "Failure in PO_orderFlow",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_140_1770285890681.png",
+    "timestamp": "2026-02-05T10:04:51.190Z"
+  },
+  {
+    "id": "BUG-1770286458460",
+    "title": "Failure in PO_orderFlow",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_140_1770286458033.png",
+    "timestamp": "2026-02-05T10:14:18.460Z"
+  },
+  {
+    "id": "BUG-1770286829366",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_138_1770286829126.png",
+    "timestamp": "2026-02-05T10:20:29.366Z"
+  },
+  {
+    "id": "BUG-1770287259530",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_138_1770287259277.png",
+    "timestamp": "2026-02-05T10:27:39.530Z"
+  },
+  {
+    "id": "BUG-1770287473728",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_138_1770287473485.png",
+    "timestamp": "2026-02-05T10:31:13.728Z"
+  },
+  {
+    "id": "BUG-1770288124848",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_141_1770288124598.png",
+    "timestamp": "2026-02-05T10:42:04.848Z"
+  },
+  {
+    "id": "BUG-1770288266140",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_141_1770288265960.png",
+    "timestamp": "2026-02-05T10:44:26.140Z"
+  },
+  {
+    "id": "BUG-1770289230156",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_141_1770289229947.png",
+    "timestamp": "2026-02-05T11:00:30.156Z"
+  },
+  {
+    "id": "BUG-1770292999707",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_146_1770292999437.png",
+    "timestamp": "2026-02-05T12:03:19.707Z"
+  },
+  {
+    "id": "BUG-1770293646467",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770293646210.png",
+    "timestamp": "2026-02-05T12:14:06.467Z"
+  },
+  {
+    "id": "BUG-1770293839693",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770293839393.png",
+    "timestamp": "2026-02-05T12:17:19.693Z"
+  },
+  {
+    "id": "BUG-1770294361663",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770294361469.png",
+    "timestamp": "2026-02-05T12:26:01.663Z"
+  },
+  {
+    "id": "BUG-1770294465918",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770294465703.png",
+    "timestamp": "2026-02-05T12:27:45.918Z"
+  },
+  {
+    "id": "BUG-1770294814524",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770294814322.png",
+    "timestamp": "2026-02-05T12:33:34.524Z"
+  },
+  {
+    "id": "BUG-1770294972713",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770294972449.png",
+    "timestamp": "2026-02-05T12:36:12.713Z"
+  },
+  {
+    "id": "BUG-1770295318877",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770295318525.png",
+    "timestamp": "2026-02-05T12:41:58.877Z"
+  },
+  {
+    "id": "BUG-1770295469532",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770295469194.png",
+    "timestamp": "2026-02-05T12:44:29.532Z"
+  },
+  {
+    "id": "BUG-1770295676231",
+    "title": "Failure in login+po_order",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_147_1770295675920.png",
+    "timestamp": "2026-02-05T12:47:56.231Z"
+  },
+  {
+    "id": "BUG-1770296353318",
+    "title": "Failure in login+po_order",
+    "description": "Failed to execute 'querySelector' on 'Document': 'aria/Login' is not a valid selector.",
+    "screenshot": "screenshots/error_147_1770296353085.png",
+    "timestamp": "2026-02-05T12:59:13.318Z"
+  },
+  {
+    "id": "BUG-1770296372933",
+    "title": "Failure in login+po_order",
+    "description": "Failed to execute 'querySelector' on 'Document': 'aria/Login' is not a valid selector.",
+    "screenshot": "screenshots/error_147_1770296372698.png",
+    "timestamp": "2026-02-05T12:59:32.933Z"
+  },
+  {
+    "id": "BUG-1770351819988",
+    "title": "Failure in login+po_order",
+    "description": "Failed to execute 'querySelector' on 'Document': 'aria/Login' is not a valid selector.",
+    "screenshot": "screenshots/error_147_1770351819846.png",
+    "timestamp": "2026-02-06T04:23:39.988Z"
+  },
+  {
+    "id": "BUG-1770352222103",
+    "title": "Failure in PO_orderFlow",
+    "description": "Failed to execute 'querySelector' on 'Document': 'aria/chevron_right' is not a valid selector.",
+    "screenshot": "screenshots/error_148_1770352221961.png",
+    "timestamp": "2026-02-06T04:30:22.103Z"
+  },
+  {
+    "id": "BUG-1770352252740",
+    "title": "Failure in PO_orderFlow",
+    "description": "Failed to execute 'querySelector' on 'Document': 'aria/chevron_right' is not a valid selector.",
+    "screenshot": "Screenshot failed",
+    "timestamp": "2026-02-06T04:30:52.740Z"
+  },
+  {
+    "id": "BUG-1770352975911",
+    "title": "Failure in PO_orderFlow",
+    "description": "Element not found after 60 search attempts.",
+    "screenshot": "screenshots/error_148_1770352975732.png",
+    "timestamp": "2026-02-06T04:42:55.911Z"
+  }
+]

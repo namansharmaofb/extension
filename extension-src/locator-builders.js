@@ -199,48 +199,204 @@ function getFullXPath(element) {
 //     };
 //   }
 // }
-function generateSelectors(el) {
-  if (!el || el.nodeType !== 1) return null;
+/**
+ * Generates selectors in Chrome DevTools Recorder format.
+ * Returns an array of selector arrays, each containing fallback strategies.
+ * @param {HTMLElement} element
+ * @returns {Object} Selector object with arrays and metadata
+ */
+function generateSelectors(element) {
+  if (!element || element.nodeType !== 1) return null;
 
-  // 1. data-testid / data-cy / data-test
+  const selectors = []; // Array of [selector] arrays
+
+  // 1. ARIA selector (highest priority for accessibility)
+  const ariaSelector = buildAriaSelector(element);
+  if (ariaSelector) {
+    selectors.push([ariaSelector]);
+  }
+
+  // 2. data-testid / data-cy / data-test
   const testAttrs = ["data-testid", "data-cy", "data-test"];
   for (const attr of testAttrs) {
-    if (el.hasAttribute(attr)) {
-      return {
-        selector: `[${attr}="${el.getAttribute(attr)}"]`,
-        selectorType: "css",
-      };
+    if (element.hasAttribute(attr)) {
+      const value = element.getAttribute(attr);
+      if (value && !isDynamic(value)) {
+        selectors.push([`[${attr}="${value.replace(/"/g, '\\"')}"]`]);
+      }
     }
   }
 
-  // 2. Stable ID
-  if (el.id && !isDynamic(el.id)) {
-    return {
-      selector: `#${CSS.escape(el.id)}`,
-      selectorType: "css",
-    };
+  // 3. Name attribute (critical for forms)
+  if (element.hasAttribute("name")) {
+    const name = element.getAttribute("name");
+    if (name && !isDynamic(name)) {
+      const tag = element.tagName.toLowerCase();
+      selectors.push([`${tag}[name="${name.replace(/"/g, '\\"')}"]`]);
+    }
   }
 
-  // 3. CSS path (relative + nth-child)
-  const css = buildCssPath(el);
+  // 4. Placeholder (for inputs)
+  if (element.hasAttribute("placeholder")) {
+    const placeholder = element.getAttribute("placeholder");
+    if (placeholder) {
+      selectors.push([`[placeholder="${placeholder.replace(/"/g, '\\"')}"]`]);
+    }
+  }
+
+  // 5. Stable ID
+  if (element.id && !isDynamic(element.id)) {
+    selectors.push([`#${CSS.escape(element.id)}`]);
+  }
+
+  // 6. CSS selector (stable attrs + limited classes)
+  const css = buildSelector(element);
   if (css) {
-    return {
-      selector: css,
-      selectorType: "css",
-    };
+    selectors.push([css]);
   }
 
-  // 4. Relative XPath fallback
+  // 7. XPath with text (for links and buttons with visible text)
+  const text = getVisibleText(element);
+  if (text && text.length > 0 && text.length < 50 && !text.includes("'")) {
+    const tag = element.tagName.toLowerCase();
+    // Exact text match
+    selectors.push([`xpath///${tag}[text()='${text}']`]);
+    // Contains text (more flexible)
+    if (text.length > 3) {
+      selectors.push([`xpath///${tag}[contains(text(), '${text}')]`]);
+    }
+  }
+
+  // 8. Full CSS path fallback
+  const cssPath = buildCssPath(element);
+  if (cssPath && cssPath !== css) {
+    selectors.push([cssPath]);
+  }
+
+  // 9. XPath fallback (last resort)
+  const xpath = getXPath(element);
+  if (xpath) {
+    selectors.push([`xpath//${xpath}`]);
+  }
+
+  // Build the result object
+  const primary = selectors.length > 0 ? selectors[0][0] : css || xpath;
+
   return {
-    selector: buildXPath(el),
-    selectorType: "xpath",
+    selectors: selectors, // NEW: Array format for Chrome DevTools Recorder
+    selector: primary, // Legacy: primary selector string
+    selectorType: getSelectorType(primary), // Legacy: type of primary selector
+    css: css,
+    xpath: xpath,
+    id: element.id && !isDynamic(element.id) ? element.id : null,
+    attributes: {
+      "data-testid": element.getAttribute("data-testid"),
+      "data-cy": element.getAttribute("data-cy"),
+      "data-test": element.getAttribute("data-test"),
+      "aria-label": element.getAttribute("aria-label"),
+      name: element.getAttribute("name"),
+      placeholder: element.getAttribute("placeholder"),
+      role: element.getAttribute("role"),
+    },
+    innerText: text || "",
   };
+}
+
+/**
+ * Builds an ARIA selector (Puppeteer format) for the element.
+ * Format: "aria/Button Text" or "aria/Input Label"
+ * @param {HTMLElement} element
+ * @returns {string|null}
+ */
+function buildAriaSelector(element) {
+  // Get accessible name (ARIA label or visible text)
+  const ariaLabel = element.getAttribute("aria-label");
+  const ariaLabelledBy = element.getAttribute("aria-labelledby");
+  let accessibleName = ariaLabel;
+
+  if (!accessibleName && ariaLabelledBy) {
+    const labelElement = document.getElementById(ariaLabelledBy);
+    if (labelElement) {
+      accessibleName = getVisibleText(labelElement);
+    }
+  }
+
+  if (!accessibleName) {
+    const role = element.getAttribute("role");
+    // For buttons, links, and role-based interactive elements, use inner text
+    if (
+      element.tagName === "BUTTON" ||
+      element.tagName === "A" ||
+      role === "button" ||
+      role === "link" ||
+      role === "menuitem" ||
+      role === "tab"
+    ) {
+      accessibleName = getVisibleText(element);
+    }
+    // For inputs, check associated label
+    else if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+      const id = element.id;
+      if (id) {
+        const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+        if (label) {
+          accessibleName = getVisibleText(label);
+        }
+      }
+      // Also try placeholder as fallback
+      if (!accessibleName) {
+        accessibleName = element.getAttribute("placeholder");
+      }
+    }
+    // If it's a child of a label or button, use the parent's accessible name
+    if (!accessibleName) {
+      const parent = element.closest("label, button, a, [role='button']");
+      if (parent && parent !== element) {
+        accessibleName = getVisibleText(parent);
+      }
+    }
+  }
+
+  if (
+    accessibleName &&
+    accessibleName.trim().length > 0 &&
+    accessibleName.length < 100
+  ) {
+    // Format: aria/accessible name
+    return `aria/${accessibleName.trim()}`;
+  }
+
+  return null;
+}
+
+/**
+ * Gets the selector type from a selector string.
+ * @param {string} selector
+ * @returns {string}
+ */
+function getSelectorType(selector) {
+  if (!selector) return "css";
+  if (selector.startsWith("aria/")) return "aria";
+  if (selector.startsWith("xpath/")) return "xpath";
+  if (selector.startsWith("#")) return "id";
+  if (selector.includes("[data-testid")) return "testId";
+  if (selector.includes("[name")) return "name";
+  return "css";
 }
 
 /* ---------------- helpers ---------------- */
 
 function isDynamic(value) {
-  return /\d{3,}|uuid|random/i.test(value);
+  if (typeof value !== "string") return true;
+  return /\d{3,}|uuid|random|test-?id|tfid-/i.test(value);
+}
+
+function isDynamicId(id) {
+  return isDynamic(id);
+}
+
+function isDynamicClass(cls) {
+  return isDynamic(cls);
 }
 
 function buildCssPath(el) {

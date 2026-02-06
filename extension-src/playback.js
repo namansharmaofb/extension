@@ -37,7 +37,241 @@ async function verifyAssertion(step) {
   return false;
 }
 
+/**
+ * Safely executes querySelectorAll and returns an array of elements.
+ * Prevents crashes on invalid selectors (e.g. Playwright prefixes).
+ */
+function safeQuerySelectorAll(selector, root = document) {
+  if (!selector || typeof selector !== "string") return [];
+
+  // Quick prevent for common invalid playwright-style selectors
+  if (
+    selector.startsWith("aria/") ||
+    selector.startsWith("xpath/") ||
+    selector.startsWith("//")
+  ) {
+    return [];
+  }
+
+  try {
+    return Array.from(root.querySelectorAll(selector));
+  } catch (e) {
+    return [];
+  }
+}
+
 function locateElement(step) {
+  let element = null;
+  // 1. Try new selector array format
+  if (
+    step.selectors &&
+    Array.isArray(step.selectors) &&
+    step.selectors.length > 0
+  ) {
+    element = locateElementWithSelectorArray(step);
+  }
+
+  // 2. Try legacy single selector if array fails or is missing
+  if (!element) {
+    element = locateElementLegacy(step);
+  }
+
+  // 3. Try fuzzy search as last resort before giving up
+  if (!element) {
+    element = fuzzyFallbackSearch(step);
+  }
+
+  // 4. Try deep shadow DOM search for the main selector
+  if (!element && step.target) {
+    const target = step.target;
+    // Don't pass prefixed ones to querySelector
+    if (
+      !target.startsWith("aria/") &&
+      !target.startsWith("xpath/") &&
+      !target.startsWith("//")
+    ) {
+      element = deepQuerySelector(target);
+    }
+  }
+
+  return element;
+}
+
+/**
+ * Locates element using new selector array format with Shadow DOM support.
+ * @param {Object} step
+ * @returns {HTMLElement|null}
+ */
+function locateElementWithSelectorArray(step) {
+  const { selectors } = step;
+
+  for (const selectorGroup of selectors) {
+    const selector = Array.isArray(selectorGroup)
+      ? selectorGroup[0]
+      : selectorGroup;
+
+    if (!selector || typeof selector !== "string") continue;
+
+    try {
+      let el = null;
+
+      // ARIA Selector (Puppeteer format: "aria/Button Text")
+      if (selector.startsWith("aria/")) {
+        const ariaText = selector.slice(5);
+        el = findByAriaLabel(ariaText);
+        if (el && isElementVisible(el)) {
+          logSelectorSuccess(selector, el);
+          return el;
+        } else if (el) {
+          logExecution(
+            `Strategy ${selector} found element but it was not visible`,
+            "warning",
+          );
+        } else {
+          logExecution(
+            `Strategy ${selector} found NO matching elements`,
+            "info",
+          );
+        }
+      }
+      // XPath selector
+      else if (selector.startsWith("xpath/")) {
+        const xpath = selector.slice(6);
+        const els = getElementsByXPath(xpath);
+        el = els.find(isElementVisible) || els[0];
+        if (el) {
+          logSelectorSuccess(selector, el);
+          return el;
+        } else if (els.length > 0) {
+          logExecution(
+            `Strategy ${selector} found ${els.length} elements but none were visible`,
+            "warning",
+          );
+        } else {
+          logExecution(
+            `Strategy ${selector} found NO matching elements`,
+            "info",
+          );
+        }
+      }
+      // CSS selector (default)
+      else {
+        // Try normal first
+        const elements = safeQuerySelectorAll(selector);
+        el = elements.find(isElementVisible) || elements[0];
+
+        // Try deep shadow if not found
+        if (!el) el = deepQuerySelector(selector);
+
+        if (el) {
+          logSelectorSuccess(selector, el);
+          return el;
+        } else if (elements.length > 0) {
+          logExecution(
+            `Strategy ${selector} found ${elements.length} elements but none were visible`,
+            "warning",
+          );
+        } else {
+          logExecution(
+            `Strategy ${selector} found NO matching elements`,
+            "info",
+          );
+        }
+      }
+    } catch (e) {
+      logExecution(
+        `Selector strategy failed: ${selector} - ${e.message}`,
+        "error",
+      );
+    }
+  }
+  return null;
+}
+
+/**
+ * Finds element by ARIA label (accessible name).
+ * @param {string} ariaText
+ * @returns {HTMLElement|null}
+ */
+function findByAriaLabel(ariaText) {
+  const normalizedSearch = ariaText.trim().toLowerCase();
+
+  // Try exact match first
+  const allElements = document.querySelectorAll("*");
+  for (const el of allElements) {
+    // Check aria-label
+    const ariaLabel = el.getAttribute("aria-label");
+    if (ariaLabel && ariaLabel.trim().toLowerCase() === normalizedSearch) {
+      return el;
+    }
+
+    // Check aria-labelledby
+    const ariaLabelledBy = el.getAttribute("aria-labelledby");
+    if (ariaLabelledBy) {
+      const labelEl = document.getElementById(ariaLabelledBy);
+      if (labelEl) {
+        const labelText = getVisibleText(labelEl).trim().toLowerCase();
+        if (labelText === normalizedSearch) {
+          return el;
+        }
+      }
+    }
+
+    // Check connected label (for inputs)
+    if (el.id) {
+      const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (label) {
+        const labelText = getVisibleText(label).trim().toLowerCase();
+        if (labelText === normalizedSearch) {
+          return el;
+        }
+      }
+    }
+
+    // Check button/link text content
+    if (el.tagName === "BUTTON" || el.tagName === "A") {
+      const text = getVisibleText(el).trim().toLowerCase();
+      if (text === normalizedSearch) {
+        return el;
+      }
+    }
+
+    // Check placeholder
+    if (el.hasAttribute("placeholder")) {
+      const placeholder = el.getAttribute("placeholder").trim().toLowerCase();
+      if (placeholder === normalizedSearch) {
+        return el;
+      }
+    }
+  }
+
+  // Try partial match
+  for (const el of allElements) {
+    const ariaLabel = el.getAttribute("aria-label");
+    if (
+      ariaLabel &&
+      ariaLabel.trim().toLowerCase().includes(normalizedSearch)
+    ) {
+      return el;
+    }
+
+    if (el.tagName === "BUTTON" || el.tagName === "A") {
+      const text = getVisibleText(el).trim().toLowerCase();
+      if (text.includes(normalizedSearch)) {
+        return el;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Legacy locator for backward compatibility.
+ * @param {Object} step
+ * @returns {HTMLElement|null}
+ */
+function locateElementLegacy(step) {
   const { targets, target, selectors, selector, selectorType } = step;
 
   const activeTargets = [];
@@ -73,8 +307,17 @@ function locateElement(step) {
         value: target.slice(parts[0].length + 1),
       });
     } else {
-      // Raw string: assume CSS
-      activeTargets.unshift({ type: "css", value: target });
+      // Raw string: check for Playwright-style prefixes
+      if (target.startsWith("aria/")) {
+        activeTargets.unshift({ type: "aria", value: target.slice(5) });
+      } else if (target.startsWith("xpath/")) {
+        activeTargets.unshift({ type: "xpath", value: target.slice(6) });
+      } else if (target.startsWith("//")) {
+        activeTargets.unshift({ type: "xpath", value: target });
+      } else {
+        // Raw string: assume CSS
+        activeTargets.unshift({ type: "css", value: target });
+      }
     }
   }
 
@@ -95,13 +338,15 @@ function locateElement(step) {
           }
         }
       } else if (type === "css" || type === "css:finder") {
-        const elements = document.querySelectorAll(value);
+        const elements = safeQuerySelectorAll(value);
         for (const candidate of elements) {
           if (isElementVisible(candidate)) {
             el = candidate;
             break;
           }
         }
+      } else if (type === "aria") {
+        el = findByAriaLabel(value);
       } else if (type === "xpath" || type.startsWith("xpath:")) {
         const els = getElementsByXPath(value);
         if (els.length > 0) el = els[0];
@@ -163,17 +408,13 @@ function locateElement(step) {
 
   // Legacy Fallback
   if (selectors && selectors.css) {
-    try {
-      const el = document.querySelector(selectors.css);
-      if (el && el.isConnected) return el;
-    } catch (e) {}
+    const el = safeQuerySelectorAll(selectors.css)[0];
+    if (el && el.isConnected) return el;
   }
 
   if (selector) {
-    try {
-      const el = document.querySelector(selector);
-      if (el && el.isConnected) return el;
-    } catch (e) {}
+    const el = safeQuerySelectorAll(selector)[0];
+    if (el && el.isConnected) return el;
   }
 
   if (selectors && selectors.id) {
@@ -181,6 +422,15 @@ function locateElement(step) {
     if (el && el.isConnected) return el;
   }
 
+  return fuzzyFallbackSearch(step);
+}
+
+/**
+ * Fuzzy fallback search for elements.
+ * @param {Object} step
+ * @returns {HTMLElement|null}
+ */
+function fuzzyFallbackSearch(step) {
   // --- AGGRESSIVE FUZZY FALLBACK (Manager Demo Mode) ---
   // If all specific locators fail, search for any clickable element with matching text
   const searchText = step.description || step.value || "";
@@ -203,14 +453,32 @@ function locateElement(step) {
 
   // --- DEEP SHADOW DOM SEARCH ---
   // If we still haven't found it, try recursively searching all shadow roots
+  const selectors =
+    step.selectors || (step.selector ? { css: step.selector } : null);
   if (selectors && selectors.css) {
     console.log(`Deep searching Shadows for: ${selectors.css}`);
     const shadowEl = deepQuerySelector(selectors.css);
     if (shadowEl && isElementVisible(shadowEl)) return shadowEl;
   }
 
-  console.log(`Locate failed for step. Selectors:`, selectors);
+  console.log(
+    `Locate failed for step. Selectors:`,
+    step.selectors || step.selector,
+  );
   return null;
+}
+
+/**
+ * Logs successful selector match.
+ * @param {string} selector
+ * @param {HTMLElement} element
+ */
+function logSelectorSuccess(selector, element) {
+  const logMsg = `Playback: Selector "${selector}" found ${element.tagName} (ID: ${element.id}, Visible: true)`;
+  chrome.storage.local.get("e2e_debug_logs").then(({ e2e_debug_logs = [] }) => {
+    e2e_debug_logs.push(`[${new Date().toISOString()}] ${logMsg}`);
+    chrome.storage.local.set({ e2e_debug_logs });
+  });
 }
 
 /**
@@ -250,6 +518,12 @@ function logExecution(text, level = "info") {
   chrome.runtime
     .sendMessage({ type: "LOG_MESSAGE", text, level })
     .catch(() => {});
+
+  // Also log to e2e_debug_logs for runner visibility
+  chrome.storage.local.get("e2e_debug_logs").then(({ e2e_debug_logs = [] }) => {
+    e2e_debug_logs.push(`[${new Date().toISOString()}] Playback: ${text}`);
+    chrome.storage.local.set({ e2e_debug_logs });
+  });
 }
 
 let currentlyExecutingIndex = -1;
@@ -294,6 +568,8 @@ async function executeSingleStep(step, index) {
   if (currentlyExecutingIndex === index) return;
   currentlyExecutingIndex = index;
 
+  logExecution(`Step ${index + 1} starting: ${JSON.stringify(step)}`, "info");
+
   try {
     let element = null;
     const maxAttempts = 40; // Increased to 10 seconds total (40 * 250ms)
@@ -327,43 +603,36 @@ async function executeSingleStep(step, index) {
         block: "center",
         inline: "center",
       });
-      await new Promise((r) => setTimeout(r, 50));
-      highlightElement(element);
       await new Promise((r) => setTimeout(r, 100));
+      highlightElement(element);
+
+      const { offsetX, offsetY } = step;
+      const rect = element.getBoundingClientRect();
+      const clientX = rect.left + (offsetX || rect.width / 2);
+      const clientY = rect.top + (offsetY || rect.height / 2);
+
+      const eventOptions = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX,
+        clientY,
+      };
+
+      // Dispatch full sequence immediately
+      element.dispatchEvent(new MouseEvent("mousedown", eventOptions));
+      element.dispatchEvent(new MouseEvent("mouseup", eventOptions));
       element.click();
+      element.dispatchEvent(new MouseEvent("click", eventOptions));
 
-      // --- FORCE CLICK FALLBACK ---
-      // Some elements need a synthetic event if .click() is blocked
-      setTimeout(() => {
-        if (executionState.isRunning && executionState.currentIndex === index) {
-          element.dispatchEvent(
-            new MouseEvent("mousedown", {
-              bubbles: true,
-              cancelable: true,
-              view: window,
-            }),
-          );
-          element.dispatchEvent(
-            new MouseEvent("mouseup", {
-              bubbles: true,
-              cancelable: true,
-              view: window,
-            }),
-          );
-          element.dispatchEvent(
-            new MouseEvent("click", {
-              bubbles: true,
-              cancelable: true,
-              view: window,
-            }),
-          );
-        }
-      }, 300);
+      console.log(
+        `Executed step ${index + 1}: Click at (${clientX}, ${clientY})`,
+      );
 
-      console.log(`Executed step ${index + 1}: Click`);
+      // Some frameworks need a bit more time to process the click and update state
       setTimeout(() => {
         chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
-      }, 500); // Wait longer for state changes
+      }, 800);
     } else if (step.action === "input") {
       element.scrollIntoView({
         behavior: "auto",
@@ -375,16 +644,26 @@ async function executeSingleStep(step, index) {
       await new Promise((r) => setTimeout(r, 100));
 
       try {
-        // React/Angular Support: Directly set value property to bypass tracking wrapper
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          "value",
-        ).set;
-        nativeInputValueSetter.call(element, step.value || "");
+        if (
+          element.tagName === "INPUT" &&
+          (element.type === "radio" || element.type === "checkbox")
+        ) {
+          element.checked = true;
+          element.dispatchEvent(new Event("click", { bubbles: true }));
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          // React/Angular Support: Directly set value property to bypass tracking wrapper
+          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            "value",
+          ).set;
+          nativeInputValueSetter.call(element, step.value || "");
 
-        // Dispatch full event sequence for frameworks
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
+          // Dispatch full event sequence for frameworks
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        }
 
         const { e2e_debug_logs = [] } =
           await chrome.storage.local.get("e2e_debug_logs");

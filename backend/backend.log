@@ -1,0 +1,6 @@
+nohup: ignoring input
+Database initialized. Setting up schemas...
+Schema check complete.
+Legacy 'test_cases' found. Migrating to new schema...
+Migration finished.
+Server listening on port 4000

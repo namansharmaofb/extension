@@ -86,6 +86,7 @@ async function finishExecution(success, error = null) {
             status: status,
             duration: duration,
             bugs: executionState.detectedBugs,
+            errorMessage: error,
           }),
         },
       );
@@ -161,6 +162,7 @@ async function executeCurrentStep() {
       // If already on the page, just advance
       if (currentUrl === stepUrl) {
         console.log("Already on target URL, skipping navigation.");
+        await log(`Engine: Already on ${stepUrl}, skipping navigation.`);
         executionState.currentIndex++;
         chrome.runtime
           .sendMessage({ type: "STEP_COMPLETE", stepIndex: index })
@@ -169,6 +171,8 @@ async function executeCurrentStep() {
         return;
       }
       executionState.waitingForNavigation = true;
+      executionState.activeStepAction = "navigate";
+      await log(`Engine: Triggering navigation to ${step.url}`);
       await chrome.tabs.update(executionState.tabId, { url: step.url });
       return;
     }
@@ -223,10 +227,16 @@ async function executeCurrentStep() {
         if (sendAttempts < maxSendAttempts) {
           setTimeout(sendMessageToAllFrames, 1000);
         } else {
-          finishExecution(
-            false,
-            `Element not found after ${maxSendAttempts} search attempts.`,
-          );
+          const errorMsg = `Element not found after ${maxSendAttempts} search attempts.`;
+          // Record as a bug on the specific step so the report isn't empty
+          if (Array.isArray(executionState.detectedBugs)) {
+            executionState.detectedBugs.push({
+              stepIndex: index,
+              type: "error",
+              message: errorMsg,
+            });
+          }
+          finishExecution(false, errorMsg);
         }
       } catch (err) {
         console.error("Frame broadcast error:", err);
@@ -292,6 +302,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       (executionState.waitingForNavigation || hasActiveNavigationStep) &&
       executionState.isRunning
     ) {
+      console.log(
+        `Navigation complete detected for step ${executionState.currentIndex + 1}`,
+      );
+      chrome.storage.local
+        .get("e2e_debug_logs")
+        .then(async ({ e2e_debug_logs = [] }) => {
+          e2e_debug_logs.push(
+            `[${new Date().toISOString()}] Engine: Navigation COMPLETE for step ${executionState.currentIndex + 1}`,
+          );
+          await chrome.storage.local.set({ e2e_debug_logs });
+        });
+
       executionState.waitingForNavigation = false;
       executionState.activeStepAction = null;
       executionState.currentIndex++;

@@ -1,0 +1,12 @@
+{
+  "name": "extension-project",
+  "version": "1.0.0",
+  "description": "Chrome Extension for Web Test Recording",
+  "scripts": {
+    "test:e2e": "cd scripts/e2e && node runner.js",
+    "backend:start": "cd backend && npm start",
+    "services:status": "lsof -i :4000 -i :3000 -i :3007"
+  },
+  "author": "",
+  "license": "ISC"
+}

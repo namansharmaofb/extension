@@ -1,12 +1,14 @@
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "automation-backend" });
@@ -272,7 +274,12 @@ app.get("/api/tests/:id", async (req, res) => {
       "SELECT * FROM commands WHERE test_id = ? ORDER BY step_order ASC",
       [req.params.id],
     );
-    res.json({ ...test, steps: commands });
+    const formattedSteps = commands.map((c) => ({
+      ...c,
+      targets: c.targets ? JSON.parse(c.targets) : [],
+      selectors: c.selectors ? JSON.parse(c.selectors) : [],
+    }));
+    res.json({ ...test, steps: formattedSteps });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -303,12 +310,15 @@ app.post("/api/projects/:id/tests", async (req, res) => {
         s.description || s.action,
         s.url,
         s.timestamp || Date.now(),
+        JSON.stringify(s.selectors || []),
+        s.offsetX || null,
+        s.offsetY || null,
       ]);
 
       if (values.length > 0) {
         await conn.query(
           `INSERT INTO commands 
-          (test_id, step_order, command, target, targets, value, description, url, timestamp) 
+          (test_id, step_order, command, target, targets, value, description, url, timestamp, selectors, offset_x, offset_y) 
           VALUES ?`,
           [values],
         );
@@ -354,12 +364,15 @@ app.put("/api/tests/:id", async (req, res) => {
         s.description || s.action,
         s.url,
         s.timestamp || Date.now(),
+        JSON.stringify(s.selectors || []),
+        s.offsetX || null,
+        s.offsetY || null,
       ]);
 
       if (values.length > 0) {
         await conn.query(
           `INSERT INTO commands 
-          (test_id, step_order, command, target, targets, value, description, url, timestamp) 
+          (test_id, step_order, command, target, targets, value, description, url, timestamp, selectors, offset_x, offset_y) 
           VALUES ?`,
           [values],
         );
@@ -425,14 +438,18 @@ app.post("/api/test-cases", async (req, res) => {
         s.description || s.action,
         s.url,
         s.timestamp || Date.now(),
+        JSON.stringify(s.selectors || []),
+        s.offsetX || null,
+        s.offsetY || null,
       ]);
       if (values.length > 0)
         await conn.query(
-          `INSERT INTO commands (test_id, step_order, command, target, value, description, url, timestamp) VALUES ?`,
+          `INSERT INTO commands (test_id, step_order, command, target, value, description, url, timestamp, selectors, offset_x, offset_y) VALUES ?`,
           [values],
         );
     }
     await conn.commit();
+    console.log(`✅ Test saved successfully: ID ${testId}, Name: ${name}`);
     res.json({ id: testId, name, stepCount: steps ? steps.length : 0 });
   } catch (err) {
     await conn.rollback();
@@ -457,6 +474,8 @@ app.get("/api/test-cases/:id", async (req, res) => {
       ...c,
       action: c.command,
       selector: c.target,
+      targets: c.targets ? JSON.parse(c.targets) : [],
+      selectors: c.selectors ? JSON.parse(c.selectors) : [],
     }));
     res.json({ ...test, steps: mappedSteps });
   } catch (err) {
@@ -466,7 +485,7 @@ app.get("/api/test-cases/:id", async (req, res) => {
 
 // Executions & Reports
 app.post("/api/tests/:id/executions", async (req, res) => {
-  const { status, duration, bugs } = req.body;
+  const { status, duration, bugs, errorMessage } = req.body;
   const testId = req.params.id;
 
   const conn = await pool.getConnection();
@@ -474,8 +493,8 @@ app.post("/api/tests/:id/executions", async (req, res) => {
     await conn.beginTransaction();
 
     const [execRes] = await conn.query(
-      "INSERT INTO executions (test_id, status, duration) VALUES (?, ?, ?)",
-      [testId, status, duration || 0],
+      "INSERT INTO executions (test_id, status, duration, error_message) VALUES (?, ?, ?, ?)",
+      [testId, status, duration || 0, errorMessage || null],
     );
     const executionId = execRes.insertId;
 
@@ -496,6 +515,7 @@ app.post("/api/tests/:id/executions", async (req, res) => {
     await conn.commit();
     res.json({ success: true, executionId });
   } catch (err) {
+    console.error("CRITICAL DATABASE ERROR in POST /api/test-cases:", err);
     await conn.rollback();
     res.status(500).json({ error: err.message });
   } finally {
@@ -531,6 +551,60 @@ app.delete("/api/test-cases/:id", async (req, res) => {
   try {
     await pool.query("DELETE FROM tests WHERE id = ?", [req.params.id]);
     res.json({ success: true, message: "Test deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Suites
+app.get("/api/projects/:id/suites", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM suites WHERE project_id = ?",
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/projects/:id/suites", async (req, res) => {
+  const { name } = req.body;
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO suites (project_id, name) VALUES (?, ?)",
+      [req.params.id, name],
+    );
+    res.json({ id: result.insertId, name, project_id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/suites/:id/tests", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT t.* FROM tests t 
+       JOIN suite_tests st ON t.id = st.test_id 
+       WHERE st.suite_id = ? 
+       ORDER BY t.created_at ASC`,
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/suites/:id/tests", async (req, res) => {
+  const { testId } = req.body;
+  try {
+    await pool.query(
+      "INSERT INTO suite_tests (suite_id, test_id) VALUES (?, ?)",
+      [req.params.id, testId],
+    );
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
