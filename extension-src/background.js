@@ -67,7 +67,13 @@ async function executeCurrentStep() {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: executionState.tabId, allFrames: true },
-        files: ["content.js"],
+        files: [
+          "utils.js",
+          "locator-builders.js",
+          "recorder.js",
+          "playback.js",
+          "content.js",
+        ],
       });
     } catch (e) {
       // Ignore if already injected or other non-critical error
@@ -177,7 +183,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           executionState.stepTimeout = null;
         }
         executionState.currentIndex++;
-        setTimeout(() => executeCurrentStep(), 1000);
+        setTimeout(() => executeCurrentStep(), 2500); // Increased from 2000ms to allow Salesforce/complex pages to fully settle
       }
     }
   }
@@ -195,7 +201,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await chrome.scripting
             .executeScript({
               target: { tabId: activeTab.id, allFrames: true },
-              files: ["content.js"],
+              files: [
+                "utils.js",
+                "locator-builders.js",
+                "recorder.js",
+                "playback.js",
+                "content.js",
+              ],
             })
             .catch((e) => console.log("Injection skipped/failed:", e.message));
 
@@ -263,13 +275,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
   } else if (message.type === "STEP_COMPLETE") {
     if (executionState.isRunning) {
-      // Clear the timeout to prevent false timeout errors
+      // COORDINATION: Only process the FIRST completion for a given step
+      // This prevents race conditions in multi-frame pages
       if (executionState.stepTimeout) {
         clearTimeout(executionState.stepTimeout);
         executionState.stepTimeout = null;
+
+        console.log(
+          `Step ${executionState.currentIndex + 1} completion received.`,
+        );
+        executionState.currentIndex++;
+        executeCurrentStep();
+      } else {
+        console.log(
+          `Step ${executionState.currentIndex + 1} already completed or timed out. Ignoring duplicate message.`,
+        );
       }
-      executionState.currentIndex++;
-      executeCurrentStep();
     }
     sendResponse({ success: true });
   } else if (message.type === "STEP_ERROR") {

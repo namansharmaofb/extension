@@ -84,6 +84,7 @@ async function updateDashboard() {
       allBugs.push({
         testName: test.name,
         message: executions[0].error_message || "Unexpected failure",
+        ariaSnapshot: executions[0].aria_snapshot_url,
         time: new Date(executions[0].created_at).toLocaleTimeString(),
       });
     }
@@ -94,9 +95,19 @@ async function updateDashboard() {
     allBugs.forEach((bug) => {
       const bugCard = document.createElement("div");
       bugCard.className = "bug-card";
+      let snapshotHtml = "";
+      if (bug.ariaSnapshot) {
+        snapshotHtml = `
+          <div class="bug-snapshot-link">
+            <a href="${bug.ariaSnapshot}" target="_blank" rel="noopener">
+              <span class="icon">📄</span> View ARIA Snapshot
+            </a>
+          </div>`;
+      }
       bugCard.innerHTML = `
                 <div class="bug-title">Failure in ${bug.testName}</div>
                 <div class="bug-desc">${bug.message}</div>
+                ${snapshotHtml}
                 <div style="font-size: 10px; color: #8b949e; margin-top: 4px;">at ${bug.time}</div>
             `;
       bugListEl.appendChild(bugCard);
@@ -110,3 +121,20 @@ async function updateDashboard() {
 // Initial update and poll
 updateDashboard();
 setInterval(updateDashboard, 10000); // Update every 10 seconds
+
+function showFullImage(src) {
+  const modal = document.createElement("div");
+  modal.className = "image-modal";
+  modal.innerHTML = `
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <img src="${src}" style="width: 100%; border-radius: 8px;">
+        </div>
+    `;
+  document.body.appendChild(modal);
+
+  modal.querySelector(".close-modal").onclick = () => modal.remove();
+  modal.onclick = (e) => {
+    if (e.target === modal) modal.remove();
+  };
+}

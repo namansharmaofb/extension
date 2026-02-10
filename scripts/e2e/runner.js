@@ -85,14 +85,15 @@ function get_answer_for_question(question) {
 
 const fs = require("fs");
 
-async function file_bug(testName, errorMsg, screenshotPath) {
+async function file_bug(testName, errorMsg, ariaSnapshotPath) {
   console.log(`[Bug Tracker] Filing bug for "${testName}"...`);
 
   const bugReport = {
     id: `BUG-${Date.now()}`,
     title: `Failure in ${testName}`,
     description: errorMsg,
-    screenshot: screenshotPath,
+    ariaSnapshot: ariaSnapshotPath || null,
+    screenshot: ariaSnapshotPath || null,
     timestamp: new Date().toISOString(),
   };
 
@@ -113,9 +114,84 @@ async function file_bug(testName, errorMsg, screenshotPath) {
     fs.writeFileSync(reportFile, JSON.stringify(reports, null, 2));
 
     console.log(`[Bug Tracker] Bug saved to ${reportFile}`);
-    console.log(`[Bug Tracker] Screenshot saved to ${screenshotPath}`);
+    if (ariaSnapshotPath) {
+      console.log(`[Bug Tracker] ARIA snapshot saved to ${ariaSnapshotPath}`);
+    }
   } catch (err) {
     console.error(`[Bug Tracker] Failed to save bug report: ${err.message}`);
+  }
+}
+
+function buildAriaSnapshotPath(prefix, testCaseId = "unknown") {
+  return path.join(
+    __dirname,
+    "aria-snapshots",
+    `aria_snapshot_${prefix}_${testCaseId}_${Date.now()}.json`,
+  );
+}
+
+async function captureAriaSnapshot(page, prefix, testCaseId) {
+  const snapshotPath = buildAriaSnapshotPath(prefix, testCaseId);
+  const dir = path.dirname(snapshotPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const snapshot = await page.accessibility.snapshot({
+    interestingOnly: false,
+  });
+  if (!snapshot) {
+    throw new Error("Accessibility snapshot was empty");
+  }
+  fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2));
+  return snapshotPath;
+}
+
+async function postFailureIfMissing({
+  testCaseId,
+  startTime,
+  errorMessage,
+  ariaSnapshotPath,
+  lastStepIndex,
+  lastStepLine,
+}) {
+  try {
+    const execRes = await fetch(
+      `${BACKEND_URL}/api/tests/${testCaseId}/executions`,
+    );
+    const executions = await execRes.json();
+    const latest = executions && executions.length > 0 ? executions[0] : null;
+    const hasRecent =
+      latest && new Date(latest.created_at).getTime() > startTime;
+    if (hasRecent) return;
+
+    const snapshotUrl = ariaSnapshotPath
+      ? `/aria-snapshots/${path.basename(ariaSnapshotPath)}`
+      : null;
+    const bugs =
+      typeof lastStepIndex === "number"
+        ? [
+            {
+              stepIndex: lastStepIndex,
+              type: "error",
+              message:
+                lastStepLine || "Execution timed out while running this step",
+            },
+          ]
+        : [];
+
+    await fetch(`${BACKEND_URL}/api/tests/${testCaseId}/executions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "failed",
+        duration: Date.now() - startTime,
+        errorMessage,
+        ariaSnapshotUrl: snapshotUrl,
+        bugs,
+      }),
+    });
+  } catch (err) {
+    console.warn("Failed to post timeout failure:", err.message);
   }
 }
 
@@ -187,8 +263,16 @@ async function executeTestCase(browser, page, testCaseId) {
 
   // Monitor for completion and poll logs
   let attempts = 0;
-  const maxAttempts = 180; // 6 minutes
+  const pollIntervalMs = parseInt(
+    process.env.E2E_POLL_INTERVAL_MS || "2000",
+    10,
+  );
+  const maxAttempts = parseInt(process.env.E2E_MAX_POLL_ATTEMPTS || "90", 10); // 3 minutes
+  const stepStallMs = parseInt(process.env.E2E_STEP_STALL_MS || "30000", 10); // 30s
   let lastLogIndex = 0;
+  let lastStepIndex = null;
+  let lastStepLine = null;
+  let lastStepAt = Date.now();
 
   while (attempts < maxAttempts) {
     // Re-check worker for polling too
@@ -215,6 +299,12 @@ async function executeTestCase(browser, page, testCaseId) {
     if (logs && logs.length > lastLogIndex) {
       for (let i = lastLogIndex; i < logs.length; i++) {
         console.log(`WORKER DEBUG: ${logs[i]}`);
+        const stepMatch = logs[i].match(/Step\s+(\d+):\s*(.+)$/);
+        if (stepMatch) {
+          lastStepIndex = parseInt(stepMatch[1], 10) - 1;
+          lastStepLine = stepMatch[2];
+          lastStepAt = Date.now();
+        }
       }
       lastLogIndex = logs.length;
     }
@@ -247,17 +337,33 @@ async function executeTestCase(browser, page, testCaseId) {
         return true;
       } else if (latest.status === "failed") {
         const errorMsg = latest.error_message || "Unknown error";
-        const screenshotPath = `screenshots/error_${testCaseId}_${Date.now()}.png`;
+        let ariaSnapshotPath = null;
         try {
-          const dir = path.dirname(screenshotPath);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-          }
-          await page.screenshot({ path: screenshotPath });
-          await file_bug(testCase.name, errorMsg, screenshotPath);
-        } catch (screenshotErr) {
-          console.error("Failed to take screenshot:", screenshotErr.message);
-          await file_bug(testCase.name, errorMsg, "Screenshot failed");
+          ariaSnapshotPath = await captureAriaSnapshot(
+            page,
+            "error",
+            testCaseId,
+          );
+          await file_bug(testCase.name, errorMsg, ariaSnapshotPath);
+
+          // Patch execution with snapshot URL for dashboard / integrations
+          const snapshotUrl = `/aria-snapshots/${path.basename(ariaSnapshotPath)}`;
+          await fetch(`${BACKEND_URL}/api/executions/${latest.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ariaSnapshotUrl: snapshotUrl }),
+          }).catch((err) =>
+            console.warn(
+              "Failed to patch execution with ARIA snapshot:",
+              err.message,
+            ),
+          );
+        } catch (snapshotErr) {
+          console.error(
+            "Failed to capture ARIA snapshot:",
+            snapshotErr.message,
+          );
+          await file_bug(testCase.name, errorMsg, null);
         }
 
         throw new Error(
@@ -266,11 +372,54 @@ async function executeTestCase(browser, page, testCaseId) {
       }
     }
 
-    await new Promise((r) => setTimeout(r, 2000));
+    // Fast-fail if we stall on the same step for too long
+    if (lastStepAt && Date.now() - lastStepAt > stepStallMs) {
+      const stallMessage = `Step ${typeof lastStepIndex === "number" ? lastStepIndex + 1 : "?"} stalled for ${Math.round(stepStallMs / 1000)}s: ${lastStepLine || "No step details"}`;
+      let ariaSnapshotPath = null;
+      try {
+        ariaSnapshotPath = await captureAriaSnapshot(page, "stall", testCaseId);
+      } catch (err) {
+        console.warn("Failed to capture stall ARIA snapshot:", err.message);
+        ariaSnapshotPath = null;
+      }
+
+      await postFailureIfMissing({
+        testCaseId,
+        startTime,
+        errorMessage: stallMessage,
+        ariaSnapshotPath,
+        lastStepIndex,
+        lastStepLine,
+      });
+
+      throw new Error(`Execution stalled: ${stallMessage}`);
+    }
+
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
     attempts++;
   }
 
-  throw new Error(`Execution of ${testCase.name} Timed Out`);
+  const totalWaitMs = maxAttempts * pollIntervalMs;
+  const timeoutMessage = `Execution of ${testCase.name} Timed Out after ${Math.round(totalWaitMs / 1000)}s`;
+
+  let ariaSnapshotPath = null;
+  try {
+    ariaSnapshotPath = await captureAriaSnapshot(page, "timeout", testCaseId);
+  } catch (err) {
+    console.warn("Failed to capture timeout ARIA snapshot:", err.message);
+    ariaSnapshotPath = null;
+  }
+
+  await postFailureIfMissing({
+    testCaseId,
+    startTime,
+    errorMessage: timeoutMessage,
+    ariaSnapshotPath,
+    lastStepIndex,
+    lastStepLine,
+  });
+
+  throw new Error(timeoutMessage);
 }
 
 async function runE2E() {
@@ -360,7 +509,42 @@ async function runE2E() {
     const page = pages[0];
 
     console.log(`Navigating to ${TARGET_URL}...`);
-    await page.goto(TARGET_URL, { waitUntil: "networkidle2" });
+    try {
+      await page.goto(TARGET_URL, { waitUntil: "load", timeout: 60000 });
+    } catch (err) {
+      console.error(`Initial navigation failed: ${err.message}`);
+      let ariaSnapshotPath = null;
+      try {
+        ariaSnapshotPath = await captureAriaSnapshot(
+          page,
+          "system_error",
+          "system",
+        );
+      } catch (snapshotErr) {
+        console.warn(
+          "Failed to capture system ARIA snapshot:",
+          snapshotErr.message,
+        );
+      }
+
+      // Try to report this as a general failure if we have a main test ID
+      const mainTestId = process.env.E2E_MAIN_TEST_ID?.split(",")[0];
+      if (mainTestId) {
+        const snapshotUrl = ariaSnapshotPath
+          ? `/aria-snapshots/${path.basename(ariaSnapshotPath)}`
+          : null;
+        await fetch(`${BACKEND_URL}/api/tests/${mainTestId}/executions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "failed",
+            errorMessage: `System Navigation Error: ${err.message}`,
+            ariaSnapshotUrl: snapshotUrl,
+          }),
+        }).catch(() => {});
+      }
+      throw err;
+    }
 
     // Initial worker check
     await getWorker(browser);

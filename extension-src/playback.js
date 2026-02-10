@@ -23,8 +23,14 @@ async function verifyAssertion(step) {
         `Assertion Failed: Element not found for: ${step.description}`,
       );
     }
-    const actualText = getVisibleText(element);
-    const expectedText = step.selectors?.innerText || step.description;
+    const actualText = getVisibleText(element)
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    const expectedText = (step.selectors?.innerText || step.description || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
 
     if (!actualText.includes(expectedText)) {
       throw new Error(
@@ -158,7 +164,22 @@ function locateElementWithSelectorArray(step) {
       else {
         // Try normal first
         const elements = safeQuerySelectorAll(selector);
-        el = elements.find(isElementVisible) || elements[0];
+
+        // Strategy: 1. Visible and matches text description
+        // 2. Visible
+        // 3. Just the first one
+        const expectedText = (step.description || "").toLowerCase().trim();
+
+        if (expectedText && expectedText.length > 2) {
+          el = elements.find((e) => {
+            const visible = isElementVisible(e);
+            if (!visible) return false;
+            const text = getVisibleText(e).toLowerCase().trim();
+            return text === expectedText || text.includes(expectedText);
+          });
+        }
+
+        if (!el) el = elements.find(isElementVisible) || elements[0];
 
         // Try deep shadow if not found
         if (!el) el = deepQuerySelector(selector);
@@ -194,7 +215,9 @@ function locateElementWithSelectorArray(step) {
  * @returns {HTMLElement|null}
  */
 function findByAriaLabel(ariaText) {
-  const normalizedSearch = ariaText.trim().toLowerCase();
+  if (!ariaText) return null;
+  // Normalize whitespace in the search string consistently
+  const normalizedSearch = ariaText.replace(/\s+/g, " ").trim().toLowerCase();
 
   // Try exact match first
   const allElements = document.querySelectorAll("*");
@@ -228,9 +251,24 @@ function findByAriaLabel(ariaText) {
       }
     }
 
-    // Check button/link text content
-    if (el.tagName === "BUTTON" || el.tagName === "A") {
-      const text = getVisibleText(el).trim().toLowerCase();
+    // Check button/link/role text content
+    const role = el.getAttribute("role");
+    const interactiveTags = ["BUTTON", "A", "SELECT", "INPUT", "TEXTAREA"];
+    const interactiveRoles = [
+      "button",
+      "link",
+      "menuitem",
+      "tab",
+      "option",
+      "radio",
+      "checkbox",
+    ];
+
+    if (
+      interactiveTags.includes(el.tagName) ||
+      interactiveRoles.includes(role)
+    ) {
+      const text = getVisibleText(el).replace(/\s+/g, " ").trim().toLowerCase();
       if (text === normalizedSearch) {
         return el;
       }
@@ -238,7 +276,11 @@ function findByAriaLabel(ariaText) {
 
     // Check placeholder
     if (el.hasAttribute("placeholder")) {
-      const placeholder = el.getAttribute("placeholder").trim().toLowerCase();
+      const placeholder = el
+        .getAttribute("placeholder")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
       if (placeholder === normalizedSearch) {
         return el;
       }
@@ -250,13 +292,32 @@ function findByAriaLabel(ariaText) {
     const ariaLabel = el.getAttribute("aria-label");
     if (
       ariaLabel &&
-      ariaLabel.trim().toLowerCase().includes(normalizedSearch)
+      ariaLabel
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase()
+        .includes(normalizedSearch)
     ) {
       return el;
     }
 
-    if (el.tagName === "BUTTON" || el.tagName === "A") {
-      const text = getVisibleText(el).trim().toLowerCase();
+    const role = el.getAttribute("role");
+    const interactiveTags = ["BUTTON", "A", "SELECT", "INPUT", "TEXTAREA"];
+    const interactiveRoles = [
+      "button",
+      "link",
+      "menuitem",
+      "tab",
+      "option",
+      "radio",
+      "checkbox",
+    ];
+
+    if (
+      interactiveTags.includes(el.tagName) ||
+      interactiveRoles.includes(role)
+    ) {
+      const text = getVisibleText(el).replace(/\s+/g, " ").trim().toLowerCase();
       if (text.includes(normalizedSearch)) {
         return el;
       }
@@ -353,7 +414,12 @@ function locateElementLegacy(step) {
       } else if (type === "linkText") {
         const links = document.getElementsByTagName("a");
         for (const link of links) {
-          if (getVisibleText(link) === value) {
+          const lText = getVisibleText(link)
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+          const vText = value.replace(/\s+/g, " ").trim().toLowerCase();
+          if (lText === vText) {
             el = link;
             break;
           }
@@ -439,8 +505,11 @@ function fuzzyFallbackSearch(step) {
       "button, a, div[role='button'], input[type='submit'], span",
     );
     for (const el of allElements) {
-      const elText = getVisibleText(el).toLowerCase();
-      const searchLower = searchText.toLowerCase();
+      const elText = getVisibleText(el)
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      const searchLower = searchText.replace(/\s+/g, " ").trim().toLowerCase();
       if (
         (elText === searchLower || elText.includes(searchLower)) &&
         isElementVisible(el)
@@ -598,6 +667,9 @@ async function executeSingleStep(step, index) {
     }
 
     if (step.action === "click") {
+      // SETTLE TIME: Give frameworks a moment to update DOM before interacting
+      await new Promise((r) => setTimeout(r, 400));
+
       element.scrollIntoView({
         behavior: "auto",
         block: "center",
@@ -617,28 +689,67 @@ async function executeSingleStep(step, index) {
         view: window,
         clientX,
         clientY,
+        buttons: 1,
       };
 
-      // Dispatch full sequence immediately
-      element.dispatchEvent(new MouseEvent("mousedown", eventOptions));
-      element.dispatchEvent(new MouseEvent("mouseup", eventOptions));
-      element.click();
-      element.dispatchEvent(new MouseEvent("click", eventOptions));
+      // Dispatch full sequence including PointerEvents for modern frameworks (MUI, etc.)
+      try {
+        element.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...eventOptions,
+            pointerType: "mouse",
+          }),
+        );
+        element.dispatchEvent(new MouseEvent("mousedown", eventOptions));
+        element.dispatchEvent(
+          new PointerEvent("pointerup", {
+            ...eventOptions,
+            pointerType: "mouse",
+          }),
+        );
+        element.dispatchEvent(new MouseEvent("mouseup", eventOptions));
+
+        // Use standard click for basic behavior
+        element.click();
+
+        // Some libraries only listen for this specific event
+        element.dispatchEvent(new MouseEvent("click", eventOptions));
+      } catch (e) {
+        console.warn("Event dispatch failed, falling back to basic click", e);
+        element.click();
+      }
 
       console.log(
-        `Executed step ${index + 1}: Click at (${clientX}, ${clientY})`,
+        `Executed step ${index + 1}: Click at (${clientX}, ${clientY}) on ${getElementDescriptor(element)}`,
+      );
+      logExecution(
+        `Step ${index + 1}: Click executed on ${getElementDescriptor(element)} at (${clientX}, ${clientY})`,
+        "success",
       );
 
-      // Some frameworks need a bit more time to process the click and update state
+      // Some frameworks need a bit more time to process the click and update state (e.g. dropdowns)
       setTimeout(() => {
         chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
-      }, 800);
+      }, 1200);
     } else if (step.action === "input") {
+      // SETTLE TIME
+      await new Promise((r) => setTimeout(r, 300));
+
       element.scrollIntoView({
         behavior: "auto",
         block: "center",
         inline: "center",
       });
+
+      // If we found a LABEL, redirect to its control (the actual input)
+      if (element.tagName === "LABEL" && element.control) {
+        logExecution(
+          `Redirecting input action from LABEL to its control: ${element.control.tagName}`,
+          "info",
+        );
+        element = element.control;
+      }
+
       element.focus();
       highlightElement(element);
       await new Promise((r) => setTimeout(r, 100));
@@ -654,15 +765,31 @@ async function executeSingleStep(step, index) {
           element.dispatchEvent(new Event("change", { bubbles: true }));
         } else {
           // React/Angular Support: Directly set value property to bypass tracking wrapper
-          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype,
-            "value",
-          ).set;
-          nativeInputValueSetter.call(element, step.value || "");
+          const prototype =
+            element instanceof HTMLTextAreaElement
+              ? window.HTMLTextAreaElement.prototype
+              : element instanceof HTMLSelectElement
+                ? window.HTMLSelectElement.prototype
+                : element instanceof HTMLInputElement
+                  ? window.HTMLInputElement.prototype
+                  : null;
 
-          // Dispatch full event sequence for frameworks
-          element.dispatchEvent(new Event("input", { bubbles: true }));
-          element.dispatchEvent(new Event("change", { bubbles: true }));
+          if (prototype) {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+              prototype,
+              "value",
+            ).set;
+            nativeInputValueSetter.call(element, step.value || "");
+
+            // Dispatch full event sequence for frameworks
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+          } else {
+            // Fallback for custom components or labels that don't have a control
+            element.value = step.value || "";
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+          }
         }
 
         const { e2e_debug_logs = [] } =
@@ -687,20 +814,50 @@ async function executeSingleStep(step, index) {
       element.blur();
 
       console.log(`Executed step ${index + 1}: Input "${step.value}"`);
-      chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
+      // Add settle time for input to allow frameworks to process changes
+      setTimeout(() => {
+        chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
+      }, 500);
     } else if (step.action === "scroll") {
       try {
         const pos = JSON.parse(step.value || '{"x":0,"y":0}');
         window.scrollTo({ left: pos.x, top: pos.y, behavior: "smooth" });
-        console.log(`Executed step ${index + 1}: Scroll`);
+        console.log(`Executed step ${index + 1}: Scroll to ${pos.x}, ${pos.y}`);
+
+        // Use a more defensive approach to ensure STEP_COMPLETE is sent
         setTimeout(() => {
+          try {
+            chrome.runtime.sendMessage(
+              {
+                type: "STEP_COMPLETE",
+                stepIndex: index,
+              },
+              (response) => {
+                if (chrome.runtime.lastError) {
+                  console.error(
+                    "Error sending STEP_COMPLETE for scroll:",
+                    chrome.runtime.lastError.message,
+                  );
+                }
+              },
+            );
+          } catch (err) {
+            console.error("Failed to send STEP_COMPLETE for scroll:", err);
+          }
+        }, 1000);
+      } catch (e) {
+        console.error("Error in scroll action:", e);
+        try {
           chrome.runtime.sendMessage({
             type: "STEP_COMPLETE",
             stepIndex: index,
           });
-        }, 800);
-      } catch (e) {
-        chrome.runtime.sendMessage({ type: "STEP_COMPLETE", stepIndex: index });
+        } catch (err) {
+          console.error(
+            "Failed to send STEP_COMPLETE after scroll error:",
+            err,
+          );
+        }
       }
     }
   } catch (err) {

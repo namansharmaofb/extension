@@ -6,36 +6,41 @@
  * @returns {HTMLElement}
  */
 function getInteractiveParent(element) {
+  if (!element || element === document.body) return element;
+
   let current = element;
   let depth = 0;
-  const maxDepth = 5; // Go a bit deeper
-
-  // If we are already on a semantic interactive element, return it
-  if (
-    ["BUTTON", "A", "SELECT", "INPUT"].includes(element.tagName) ||
-    ["button", "link", "checkbox", "radio"].includes(
-      element.getAttribute("role"),
-    )
-  ) {
-    return element;
-  }
+  const maxDepth = 10; // Slightly deeper for complex shadow DOM/MUI structures
 
   while (current && current !== document.body && depth < maxDepth) {
-    // Prefer these semantic tags and roles
+    const tagName = (current.tagName || "").toUpperCase();
+    const role = (current.getAttribute("role") || "").toLowerCase();
+
+    // Semantic interactive elements
     if (
-      ["BUTTON", "A", "SELECT", "INPUT"].includes(current.tagName) ||
-      ["button", "link", "checkbox", "radio"].includes(
-        current.getAttribute("role"),
-      )
+      ["BUTTON", "A", "SELECT", "INPUT", "TEXTAREA"].includes(tagName) ||
+      [
+        "button",
+        "link",
+        "checkbox",
+        "radio",
+        "menuitem",
+        "tab",
+        "option",
+      ].includes(role) ||
+      current.hasAttribute("onclick") ||
+      current.hasAttribute("tabindex")
     ) {
       return current;
     }
 
-    // Also check for common clickable classes if no semantic parent found yet
+    // Common clickable patterns
+    const style = window.getComputedStyle(current);
     if (
-      current.hasAttribute("onclick") ||
       current.classList.contains("btn") ||
-      current.classList.contains("button")
+      current.classList.contains("button") ||
+      current.classList.contains("clickable") ||
+      style.cursor === "pointer"
     ) {
       return current;
     }
@@ -44,42 +49,26 @@ function getInteractiveParent(element) {
     depth++;
   }
 
-  // Fallback: stay on original element if no clear parent,
-  // but if it's a very small element with no ID, it's often better to go up one level
-  if (
-    ["SPAN", "I", "SMALL", "B", "STRONG"].includes(element.tagName) &&
-    !element.id &&
-    element.parentElement
-  ) {
+  // Fallback: stay on original element but skip very small decoration elements if parent exists
+  const targetTag = (element.tagName || "").toUpperCase();
+  const decorationTags = [
+    "SPAN",
+    "I",
+    "SMALL",
+    "B",
+    "STRONG",
+    "SVG",
+    "PATH",
+    "USE",
+    "CIRCLE",
+    "RECT",
+  ];
+
+  if (decorationTags.includes(targetTag) && element.parentElement) {
     return element.parentElement;
   }
 
   return element;
-}
-
-/**
- * Checks if an element is interactive.
- * @param {HTMLElement} element
- * @returns {boolean}
- */
-function isInteractive(element) {
-  if (!element) return false;
-
-  const tag = element.tagName;
-  if (tag === "BUTTON" || tag === "A" || tag === "SELECT") return true;
-
-  const role = element.getAttribute("role");
-  if (role === "button" || role === "link" || role === "menuitem") return true;
-
-  if (element.hasAttribute("onclick")) return true;
-  if (element.classList.contains("btn") || element.classList.contains("button"))
-    return true;
-
-  // Check if it's a clickable div/span
-  const cursor = window.getComputedStyle(element).cursor;
-  if (cursor === "pointer") return true;
-
-  return false;
 }
 
 /**
@@ -88,7 +77,7 @@ function isInteractive(element) {
  */
 function handleClick(event) {
   try {
-    if (!isRecording) return;
+    if (!window.isRecording) return;
     if (event.target.hasAttribute("data-recorder-ui")) return;
 
     // Use composedPath to get the actual target inside Shadow DOM
@@ -135,7 +124,7 @@ const inputTimers = new Map();
  */
 function handleInput(event) {
   try {
-    if (!isRecording) return;
+    if (!window.isRecording) return;
 
     // Use composedPath to get the actual target inside Shadow DOM
     const composedPath = event.composedPath();
@@ -199,7 +188,7 @@ function recordInputStep(target) {
  */
 function handleChange(event) {
   try {
-    if (!isRecording) return;
+    if (!window.isRecording) return;
 
     const target = event.target;
     if (
@@ -231,7 +220,7 @@ let scrollTimeout;
  */
 function handleScroll(event) {
   try {
-    if (!isRecording) return;
+    if (!window.isRecording) return;
 
     clearTimeout(scrollTimeout);
     scrollTimeout = setTimeout(() => {

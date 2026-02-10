@@ -42,12 +42,13 @@ function getVisibleText(element) {
   if (!element) return "";
   const text = element.innerText || element.textContent;
   if (text) {
-    const trimmed = text.trim();
-    if (trimmed.length > 0 && trimmed.length < 50) return trimmed;
+    // Normalize whitespace: replace multiple spaces/newlines with a single space
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (normalized.length > 0 && normalized.length < 100) return normalized;
   }
-  if (element.tagName === "IMG" && element.alt) return element.alt;
+  if (element.tagName === "IMG" && element.alt) return element.alt.trim();
   if (element.tagName === "INPUT" && element.type === "submit" && element.value)
-    return element.value;
+    return element.value.trim();
   return "";
 }
 
@@ -228,7 +229,7 @@ function deepQuerySelector(selector, root = document) {
   if (element) return element;
 
   // Search in all shadow roots
-  const allElements = root.querySelectorAll('*');
+  const allElements = root.querySelectorAll("*");
   for (const el of allElements) {
     if (el.shadowRoot) {
       const found = deepQuerySelector(selector, el.shadowRoot);

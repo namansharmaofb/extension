@@ -256,14 +256,16 @@ function generateSelectors(element) {
   }
 
   // 7. XPath with text (for links and buttons with visible text)
-  const text = getVisibleText(element);
+  const text = getVisibleText(element).replace(/\s+/g, " ").trim();
   if (text && text.length > 0 && text.length < 50 && !text.includes("'")) {
     const tag = element.tagName.toLowerCase();
-    // Exact text match
-    selectors.push([`xpath///${tag}[text()='${text}']`]);
+    // Use normalize-space(.) to handle non-breaking spaces and erratic whitespace in text matches
+    selectors.push([`xpath///${tag}[normalize-space(.)='${text}']`]);
     // Contains text (more flexible)
     if (text.length > 3) {
-      selectors.push([`xpath///${tag}[contains(text(), '${text}')]`]);
+      selectors.push([
+        `xpath///${tag}[contains(normalize-space(.), '${text}')]`,
+      ]);
     }
   }
 
@@ -279,11 +281,17 @@ function generateSelectors(element) {
     selectors.push([`xpath//${xpath}`]);
   }
 
+  // REORDER: Push any selectors containing :nth- (fragile) to the end of the list
+  const robustSelectors = selectors.filter((s) => !s[0].includes(":nth-"));
+  const fragileSelectors = selectors.filter((s) => s[0].includes(":nth-"));
+  const reorderedSelectors = [...robustSelectors, ...fragileSelectors];
+
   // Build the result object
-  const primary = selectors.length > 0 ? selectors[0][0] : css || xpath;
+  const primary =
+    reorderedSelectors.length > 0 ? reorderedSelectors[0][0] : css || xpath;
 
   return {
-    selectors: selectors, // NEW: Array format for Chrome DevTools Recorder
+    selectors: reorderedSelectors, // NEW: Reordered to favor robust strategies
     selector: primary, // Legacy: primary selector string
     selectorType: getSelectorType(primary), // Legacy: type of primary selector
     css: css,
@@ -327,10 +335,15 @@ function buildAriaSelector(element) {
     if (
       element.tagName === "BUTTON" ||
       element.tagName === "A" ||
-      role === "button" ||
-      role === "link" ||
-      role === "menuitem" ||
-      role === "tab"
+      [
+        "button",
+        "link",
+        "menuitem",
+        "tab",
+        "option",
+        "radio",
+        "checkbox",
+      ].includes(role)
     ) {
       accessibleName = getVisibleText(element);
     }
@@ -349,8 +362,10 @@ function buildAriaSelector(element) {
       }
     }
     // If it's a child of a label or button, use the parent's accessible name
-    if (!accessibleName) {
-      const parent = element.closest("label, button, a, [role='button']");
+    if (!accessibleName || accessibleName.length < 2) {
+      const parent = element.closest(
+        "label, button, a, [role='button'], [role='link']",
+      );
       if (parent && parent !== element) {
         accessibleName = getVisibleText(parent);
       }
@@ -360,10 +375,12 @@ function buildAriaSelector(element) {
   if (
     accessibleName &&
     accessibleName.trim().length > 0 &&
-    accessibleName.length < 100
+    accessibleName.length < 80
   ) {
+    // Normalize whitespace for the final selector string
+    const finalName = accessibleName.replace(/\s+/g, " ").trim();
     // Format: aria/accessible name
-    return `aria/${accessibleName.trim()}`;
+    return `aria/${finalName}`;
   }
 
   return null;
@@ -388,7 +405,11 @@ function getSelectorType(selector) {
 
 function isDynamic(value) {
   if (typeof value !== "string") return true;
-  return /\d{3,}|uuid|random|test-?id|tfid-/i.test(value);
+  // Ignore purely numeric long strings or hex-like strings
+  if (/^[0-9a-f]{16,}$/.test(value)) return true;
+  // Allow common stable prefixes
+  if (/^(mui|btn|nav|list|item|cell)-/i.test(value)) return false;
+  return /\d{5,}|uuid|random|test-?id|tfid-/i.test(value);
 }
 
 function isDynamicId(id) {

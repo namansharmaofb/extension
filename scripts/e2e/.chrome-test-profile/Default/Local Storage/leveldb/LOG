@@ -1,3 +1,3 @@
-2026/02/06-10:14:39.602 bd35 Reusing MANIFEST /home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/.chrome-test-profile/Default/Local Storage/leveldb/MANIFEST-000001
-2026/02/06-10:14:39.610 bd35 Recovering log #3
-2026/02/06-10:14:39.611 bd35 Reusing old log /home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/.chrome-test-profile/Default/Local Storage/leveldb/000003.log 
+2026/02/10-16:46:47.337 2612a Reusing MANIFEST /home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/.chrome-test-profile/Default/Local Storage/leveldb/MANIFEST-000001
+2026/02/10-16:46:47.344 2612a Recovering log #3
+2026/02/10-16:46:47.345 2612a Reusing old log /home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/.chrome-test-profile/Default/Local Storage/leveldb/000003.log 

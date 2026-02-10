@@ -9,6 +9,10 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+app.use(
+  "/aria-snapshots",
+  express.static(path.join(__dirname, "../scripts/e2e/aria-snapshots")),
+);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "automation-backend" });
@@ -112,6 +116,8 @@ async function initDb() {
       test_id INT NOT NULL,
       status VARCHAR(50) NOT NULL, -- 'success', 'failed', 'stopped'
       duration INT, -- in milliseconds
+      error_message TEXT,
+      aria_snapshot_url TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE
     );
@@ -142,6 +148,23 @@ async function initDb() {
     }
   } catch (err) {
     console.warn("Could not alter table commands:", err.message);
+  }
+
+  // Ensure 'aria_snapshot_url' column exists in 'executions' (migration from 'screenshot_url')
+  try {
+    const [cols] = await pool.query(
+      "SHOW COLUMNS FROM executions LIKE 'screenshot_url'",
+    );
+    if (cols.length > 0) {
+      await pool.query(
+        "ALTER TABLE executions CHANGE COLUMN screenshot_url aria_snapshot_url TEXT",
+      );
+      console.log(
+        "Renamed 'screenshot_url' to 'aria_snapshot_url' in 'executions' table.",
+      );
+    }
+  } catch (err) {
+    console.warn("Could not migrate executions table:", err.message);
   }
 
   console.log("Schema check complete.");
@@ -485,7 +508,7 @@ app.get("/api/test-cases/:id", async (req, res) => {
 
 // Executions & Reports
 app.post("/api/tests/:id/executions", async (req, res) => {
-  const { status, duration, bugs, errorMessage } = req.body;
+  const { status, duration, bugs, errorMessage, ariaSnapshotUrl } = req.body;
   const testId = req.params.id;
 
   const conn = await pool.getConnection();
@@ -493,8 +516,14 @@ app.post("/api/tests/:id/executions", async (req, res) => {
     await conn.beginTransaction();
 
     const [execRes] = await conn.query(
-      "INSERT INTO executions (test_id, status, duration, error_message) VALUES (?, ?, ?, ?)",
-      [testId, status, duration || 0, errorMessage || null],
+      "INSERT INTO executions (test_id, status, duration, error_message, aria_snapshot_url) VALUES (?, ?, ?, ?, ?)",
+      [
+        testId,
+        status,
+        duration || 0,
+        errorMessage || null,
+        ariaSnapshotUrl || null,
+      ],
     );
     const executionId = execRes.insertId;
 
@@ -542,6 +571,79 @@ app.get("/api/executions/:id/report", async (req, res) => {
       [req.params.id],
     );
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bugs (failed executions + step-level reports)
+app.get("/api/bugs", async (req, res) => {
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(limitRaw, 1), 50)
+    : 20;
+
+  try {
+    const [executions] = await pool.query(
+      `SELECT e.*, t.name AS test_name
+       FROM executions e
+       JOIN tests t ON e.test_id = t.id
+       WHERE e.status = 'failed'
+       ORDER BY e.created_at DESC
+       LIMIT ?`,
+      [limit],
+    );
+
+    if (!executions.length) {
+      res.json([]);
+      return;
+    }
+
+    const results = [];
+    for (const exec of executions) {
+      const [reports] = await pool.query(
+        "SELECT * FROM execution_reports WHERE execution_id = ? ORDER BY step_index ASC",
+        [exec.id],
+      );
+      const [steps] = await pool.query(
+        "SELECT step_order, command, target, description, url FROM commands WHERE test_id = ? ORDER BY step_order ASC",
+        [exec.test_id],
+      );
+
+      const stepsByOrder = new Map();
+      steps.forEach((s) => stepsByOrder.set(s.step_order, s));
+
+      const reportsWithSteps = reports.map((r) => {
+        const stepNumber =
+          typeof r.step_index === "number" ? r.step_index + 1 : null;
+        const step = stepNumber ? stepsByOrder.get(stepNumber) : null;
+        return {
+          ...r,
+          step_number: stepNumber,
+          step,
+        };
+      });
+
+      results.push({
+        ...exec,
+        reports: reportsWithSteps,
+      });
+    }
+
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/executions/:id", async (req, res) => {
+  const { ariaSnapshotUrl } = req.body;
+  try {
+    await pool.query(
+      "UPDATE executions SET aria_snapshot_url = ? WHERE id = ?",
+      [ariaSnapshotUrl, req.params.id],
+    );
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

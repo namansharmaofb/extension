@@ -103,6 +103,10 @@ async function finishExecution(success, error = null) {
 /**
  * Executes the current step in the execution queue.
  */
+const STEP_TIMEOUT_MS = 20000;
+const BROADCAST_MAX_ATTEMPTS = 20;
+const BROADCAST_INTERVAL_MS = 1000;
+
 async function executeCurrentStep() {
   if (!executionState.isRunning) return;
 
@@ -136,9 +140,9 @@ async function executeCurrentStep() {
       console.error(`Timeout waiting for step ${index + 1}`);
       finishExecution(
         false,
-        `Timeout waiting for step ${index + 1} (60s limit)`,
+        `Timeout waiting for step ${index + 1} (${Math.round(STEP_TIMEOUT_MS / 1000)}s limit)`,
       );
-    }, 60000);
+    }, STEP_TIMEOUT_MS);
 
     const tab = await chrome.tabs.get(executionState.tabId);
     if (!tab) {
@@ -179,7 +183,7 @@ async function executeCurrentStep() {
 
     // BROADCAST to all frames
     let sendAttempts = 0;
-    const maxSendAttempts = 60; // Increased to 60 for demo-grade stability (1 minute total)
+    const maxSendAttempts = BROADCAST_MAX_ATTEMPTS; // Reduced for faster failure feedback
 
     const sendMessageToAllFrames = async () => {
       if (!executionState.isRunning || executionState.currentIndex !== index)
@@ -225,7 +229,7 @@ async function executeCurrentStep() {
 
         // Check if we reached the max attempts for broadcast
         if (sendAttempts < maxSendAttempts) {
-          setTimeout(sendMessageToAllFrames, 1000);
+          setTimeout(sendMessageToAllFrames, BROADCAST_INTERVAL_MS);
         } else {
           const errorMsg = `Element not found after ${maxSendAttempts} search attempts.`;
           // Record as a bug on the specific step so the report isn't empty
