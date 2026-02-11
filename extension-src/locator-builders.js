@@ -317,60 +317,8 @@ function generateSelectors(element) {
  * @returns {string|null}
  */
 function buildAriaSelector(element) {
-  // Get accessible name (ARIA label or visible text)
-  const ariaLabel = element.getAttribute("aria-label");
-  const ariaLabelledBy = element.getAttribute("aria-labelledby");
-  let accessibleName = ariaLabel;
-
-  if (!accessibleName && ariaLabelledBy) {
-    const labelElement = document.getElementById(ariaLabelledBy);
-    if (labelElement) {
-      accessibleName = getVisibleText(labelElement);
-    }
-  }
-
-  if (!accessibleName) {
-    const role = element.getAttribute("role");
-    // For buttons, links, and role-based interactive elements, use inner text
-    if (
-      element.tagName === "BUTTON" ||
-      element.tagName === "A" ||
-      [
-        "button",
-        "link",
-        "menuitem",
-        "tab",
-        "option",
-        "radio",
-        "checkbox",
-      ].includes(role)
-    ) {
-      accessibleName = getVisibleText(element);
-    }
-    // For inputs, check associated label
-    else if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
-      const id = element.id;
-      if (id) {
-        const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
-        if (label) {
-          accessibleName = getVisibleText(label);
-        }
-      }
-      // Also try placeholder as fallback
-      if (!accessibleName) {
-        accessibleName = element.getAttribute("placeholder");
-      }
-    }
-    // If it's a child of a label or button, use the parent's accessible name
-    if (!accessibleName || accessibleName.length < 2) {
-      const parent = element.closest(
-        "label, button, a, [role='button'], [role='link']",
-      );
-      if (parent && parent !== element) {
-        accessibleName = getVisibleText(parent);
-      }
-    }
-  }
+  // Use getElementDescriptor logic for consistent accessible name
+  let accessibleName = getElementDescriptor(element);
 
   if (
     accessibleName &&

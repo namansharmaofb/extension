@@ -68,13 +68,18 @@ function safeQuerySelectorAll(selector, root = document) {
 
 function locateElement(step) {
   let element = null;
-  // 1. Try new selector array format
-  if (
-    step.selectors &&
-    Array.isArray(step.selectors) &&
-    step.selectors.length > 0
-  ) {
-    element = locateElementWithSelectorArray(step);
+  // 1. Try new selector array format (or nested selectors object)
+  const selectorArray = Array.isArray(step.selectors)
+    ? step.selectors
+    : Array.isArray(step.selectors?.selectors)
+      ? step.selectors.selectors
+      : null;
+  if (selectorArray && selectorArray.length > 0) {
+    const stepWithArray =
+      selectorArray === step.selectors
+        ? step
+        : { ...step, selectors: selectorArray };
+    element = locateElementWithSelectorArray(stepWithArray);
   }
 
   // 2. Try legacy single selector if array fails or is missing
@@ -124,15 +129,51 @@ function locateElementWithSelectorArray(step) {
       // ARIA Selector (Puppeteer format: "aria/Button Text")
       if (selector.startsWith("aria/")) {
         const ariaText = selector.slice(5);
-        el = findByAriaLabel(ariaText);
-        if (el && isElementVisible(el)) {
+        if (isGenericIconAria(ariaText)) {
+          logExecution(
+            `Skipping generic aria icon selector ${selector}`,
+            "info",
+          );
+          continue;
+        }
+        const elements = findAllByAriaLabel(ariaText);
+
+        // Strategy: 1. Visible and matches step description text
+        // 2. Visible (only if unique match)
+        // 3. Skip if ambiguous — let more specific selectors handle it
+        const expectedText = (
+          step.description ||
+          step.selectors?.innerText ||
+          ""
+        )
+          .toLowerCase()
+          .trim();
+        const visibleElements = elements.filter(isElementVisible);
+
+        if (expectedText && expectedText.length > 2) {
+          el = visibleElements.find((e) => {
+            const text = getVisibleText(e).toLowerCase().trim();
+            return text === expectedText || text.includes(expectedText);
+          });
+        }
+
+        // If we have exactly 1 visible match, use it
+        if (!el && visibleElements.length === 1) {
+          el = visibleElements[0];
+        }
+        // If many visible matches and text didn't disambiguate, skip to let
+        // more specific selectors (XPath with ID, CSS) win
+        if (!el && visibleElements.length > 1) {
+          logExecution(
+            `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
+            "info",
+          );
+          continue;
+        }
+
+        if (el) {
           logSelectorSuccess(selector, el);
           return el;
-        } else if (el) {
-          logExecution(
-            `Strategy ${selector} found element but it was not visible`,
-            "warning",
-          );
         } else {
           logExecution(
             `Strategy ${selector} found NO matching elements`,
@@ -144,7 +185,31 @@ function locateElementWithSelectorArray(step) {
       else if (selector.startsWith("xpath/")) {
         const xpath = selector.slice(6);
         const els = getElementsByXPath(xpath);
-        el = els.find(isElementVisible) || els[0];
+
+        // Similar priority strategy for XPath
+        const expectedText = (step.description || "").toLowerCase().trim();
+        const visibleElements = els.filter(isElementVisible);
+
+        if (expectedText && expectedText.length > 2) {
+          el = visibleElements.find((e) => {
+            const text = getVisibleText(e).toLowerCase().trim();
+            return text === expectedText || text.includes(expectedText);
+          });
+        }
+
+        // If unique visible match, use it
+        if (!el && visibleElements.length === 1) {
+          el = visibleElements[0];
+        }
+        // If ambiguous (multiple visible matches), skip to more specific selectors
+        if (!el && visibleElements.length > 1) {
+          logExecution(
+            `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
+            "info",
+          );
+          continue;
+        }
+
         if (el) {
           logSelectorSuccess(selector, el);
           return el;
@@ -171,15 +236,32 @@ function locateElementWithSelectorArray(step) {
         const expectedText = (step.description || "").toLowerCase().trim();
 
         if (expectedText && expectedText.length > 2) {
-          el = elements.find((e) => {
-            const visible = isElementVisible(e);
-            if (!visible) return false;
-            const text = getVisibleText(e).toLowerCase().trim();
-            return text === expectedText || text.includes(expectedText);
+          const visibleMatches = elements.filter(isElementVisible);
+          const textMatches = visibleMatches.filter((e) => {
+            const text = getElementDescriptor(e) || getVisibleText(e);
+            return textMatchesExpected(expectedText, text);
           });
+
+          if (textMatches.length === 1) {
+            el = textMatches[0];
+          } else if (textMatches.length > 1) {
+            logExecution(
+              `Strategy ${selector} matched ${textMatches.length} elements for text "${expectedText}", skipping ambiguous match`,
+              "info",
+            );
+            continue;
+          } else if (isSpecificSelector(selector) && visibleMatches.length === 1) {
+            el = visibleMatches[0];
+          } else {
+            logExecution(
+              `Strategy ${selector} found elements but none matched text "${expectedText}", skipping`,
+              "info",
+            );
+            continue;
+          }
         }
 
-        if (!el) el = elements.find(isElementVisible) || elements[0];
+        if (!el) el = elements.find(isElementVisible);
 
         // Try deep shadow if not found
         if (!el) el = deepQuerySelector(selector);
@@ -210,121 +292,104 @@ function locateElementWithSelectorArray(step) {
 }
 
 /**
- * Finds element by ARIA label (accessible name).
+ * Finds all elements by ARIA label (accessible name).
  * @param {string} ariaText
- * @returns {HTMLElement|null}
+ * @returns {Array<HTMLElement>}
  */
-function findByAriaLabel(ariaText) {
-  if (!ariaText) return null;
-  // Normalize whitespace in the search string consistently
+function findAllByAriaLabel(ariaText) {
+  if (!ariaText) return [];
   const normalizedSearch = ariaText.replace(/\s+/g, " ").trim().toLowerCase();
+  const matches = [];
 
-  // Try exact match first
   const allElements = document.querySelectorAll("*");
   for (const el of allElements) {
-    // Check aria-label
+    let matched = false;
+
+    // 1. aria-label
     const ariaLabel = el.getAttribute("aria-label");
     if (ariaLabel && ariaLabel.trim().toLowerCase() === normalizedSearch) {
-      return el;
+      matched = true;
     }
 
-    // Check aria-labelledby
-    const ariaLabelledBy = el.getAttribute("aria-labelledby");
-    if (ariaLabelledBy) {
-      const labelEl = document.getElementById(ariaLabelledBy);
-      if (labelEl) {
-        const labelText = getVisibleText(labelEl).trim().toLowerCase();
-        if (labelText === normalizedSearch) {
-          return el;
+    // 2. aria-labelledby
+    if (!matched) {
+      const ariaLabelledBy = el.getAttribute("aria-labelledby");
+      if (ariaLabelledBy) {
+        const labelEl = document.getElementById(ariaLabelledBy);
+        if (labelEl) {
+          const labelText = getVisibleText(labelEl).trim().toLowerCase();
+          if (labelText === normalizedSearch) matched = true;
         }
       }
     }
 
-    // Check connected label (for inputs)
-    if (el.id) {
+    // 3. connected label
+    if (!matched && el.id) {
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (label) {
         const labelText = getVisibleText(label).trim().toLowerCase();
-        if (labelText === normalizedSearch) {
-          return el;
-        }
+        if (labelText === normalizedSearch) matched = true;
       }
     }
 
-    // Check button/link/role text content
-    const role = el.getAttribute("role");
-    const interactiveTags = ["BUTTON", "A", "SELECT", "INPUT", "TEXTAREA"];
-    const interactiveRoles = [
-      "button",
-      "link",
-      "menuitem",
-      "tab",
-      "option",
-      "radio",
-      "checkbox",
-    ];
-
-    if (
-      interactiveTags.includes(el.tagName) ||
-      interactiveRoles.includes(role)
-    ) {
-      const text = getVisibleText(el).replace(/\s+/g, " ").trim().toLowerCase();
-      if (text === normalizedSearch) {
-        return el;
+    // 4. Wrap label
+    if (!matched) {
+      const wrapLabel = el.closest("label");
+      if (wrapLabel) {
+        const labelText = getVisibleText(wrapLabel).trim().toLowerCase();
+        if (labelText === normalizedSearch) matched = true;
       }
     }
 
-    // Check placeholder
-    if (el.hasAttribute("placeholder")) {
+    // 5. Role/TagName text
+    if (!matched) {
+      const role = el.getAttribute("role");
+      const interactiveTags = ["BUTTON", "A", "SELECT", "INPUT", "TEXTAREA"];
+      const interactiveRoles = [
+        "button",
+        "link",
+        "menuitem",
+        "tab",
+        "option",
+        "radio",
+        "checkbox",
+      ];
+      if (
+        interactiveTags.includes(el.tagName) ||
+        (role && interactiveRoles.includes(role))
+      ) {
+        const text = getVisibleText(el)
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+        if (text === normalizedSearch) matched = true;
+      }
+    }
+
+    // 6. Placeholder
+    if (!matched && el.hasAttribute("placeholder")) {
       const placeholder = el
         .getAttribute("placeholder")
         .replace(/\s+/g, " ")
         .trim()
         .toLowerCase();
-      if (placeholder === normalizedSearch) {
-        return el;
-      }
+      if (placeholder === normalizedSearch) matched = true;
     }
+
+    if (matched) matches.push(el);
   }
 
-  // Try partial match
-  for (const el of allElements) {
-    const ariaLabel = el.getAttribute("aria-label");
-    if (
-      ariaLabel &&
-      ariaLabel
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase()
-        .includes(normalizedSearch)
-    ) {
-      return el;
-    }
+  return matches;
+}
 
-    const role = el.getAttribute("role");
-    const interactiveTags = ["BUTTON", "A", "SELECT", "INPUT", "TEXTAREA"];
-    const interactiveRoles = [
-      "button",
-      "link",
-      "menuitem",
-      "tab",
-      "option",
-      "radio",
-      "checkbox",
-    ];
-
-    if (
-      interactiveTags.includes(el.tagName) ||
-      interactiveRoles.includes(role)
-    ) {
-      const text = getVisibleText(el).replace(/\s+/g, " ").trim().toLowerCase();
-      if (text.includes(normalizedSearch)) {
-        return el;
-      }
-    }
-  }
-
-  return null;
+/**
+ * Finds element by ARIA label (accessible name).
+ * @param {string} ariaText
+ * @returns {HTMLElement|null}
+ */
+function findByAriaLabel(ariaText) {
+  const matches = findAllByAriaLabel(ariaText);
+  return matches.find(isElementVisible) || matches[0] || null;
 }
 
 /**
@@ -387,10 +452,11 @@ function locateElementLegacy(step) {
     try {
       let el = null;
       const { type, value } = locator;
+      const normalizedValue = normalizeSelectorValue(type, value);
 
       if (type === "id") {
         const elements = document.querySelectorAll(
-          `[id="${CSS.escape(value)}"]`,
+          `[id="${CSS.escape(normalizedValue)}"]`,
         );
         for (const candidate of elements) {
           if (isElementVisible(candidate)) {
@@ -399,17 +465,63 @@ function locateElementLegacy(step) {
           }
         }
       } else if (type === "css" || type === "css:finder") {
-        const elements = safeQuerySelectorAll(value);
-        for (const candidate of elements) {
-          if (isElementVisible(candidate)) {
-            el = candidate;
-            break;
+        const elements = safeQuerySelectorAll(normalizedValue);
+        const expectedText = (
+          step.description ||
+          step.selectors?.innerText ||
+          ""
+        )
+          .toLowerCase()
+          .trim();
+
+        if (expectedText && expectedText.length > 2) {
+          const visibleMatches = elements.filter(isElementVisible);
+          const textMatches = visibleMatches.filter((e) => {
+            const text = getElementDescriptor(e) || getVisibleText(e);
+            return textMatchesExpected(expectedText, text);
+          });
+
+          if (textMatches.length === 1) {
+            el = textMatches[0];
+          } else if (textMatches.length > 1) {
+            logExecution(
+              `Legacy strategy ${type} matched ${textMatches.length} elements for text "${expectedText}", skipping ambiguous match`,
+              "info",
+            );
+            continue;
+          } else if (
+            isSpecificSelector(normalizedValue) &&
+            visibleMatches.length === 1
+          ) {
+            el = visibleMatches[0];
+          } else {
+            logExecution(
+              `Legacy strategy ${type} found elements but none matched text "${expectedText}", skipping`,
+              "info",
+            );
+            continue;
+          }
+        }
+
+        if (!el) {
+          for (const candidate of elements) {
+            if (isElementVisible(candidate)) {
+              el = candidate;
+              break;
+            }
           }
         }
       } else if (type === "aria") {
-        el = findByAriaLabel(value);
+        if (isGenericIconAria(normalizedValue)) {
+          logExecution(
+            `Skipping generic aria icon selector aria/${normalizedValue}`,
+            "info",
+          );
+          continue;
+        }
+        el = findByAriaLabel(normalizedValue);
       } else if (type === "xpath" || type.startsWith("xpath:")) {
-        const els = getElementsByXPath(value);
+        const els = getElementsByXPath(normalizedValue);
         if (els.length > 0) el = els[0];
       } else if (type === "linkText") {
         const links = document.getElementsByTagName("a");
@@ -425,16 +537,18 @@ function locateElementLegacy(step) {
           }
         }
       } else if (type === "name") {
-        el = document.querySelector(`[name="${CSS.escape(value)}"]`);
+        el = document.querySelector(`[name="${CSS.escape(normalizedValue)}"]`);
       } else if (type === "testId") {
         el = document.querySelector(
-          `[data-testid="${CSS.escape(value)}"], [data-cy="${CSS.escape(value)}"], [data-test-id="${CSS.escape(value)}"], [data-qa="${CSS.escape(value)}"]`,
+          `[data-testid="${CSS.escape(normalizedValue)}"], [data-cy="${CSS.escape(normalizedValue)}"], [data-test-id="${CSS.escape(normalizedValue)}"], [data-qa="${CSS.escape(normalizedValue)}"]`,
         );
       } else if (type === "placeholder") {
-        el = document.querySelector(`[placeholder="${CSS.escape(value)}"]`);
+        el = document.querySelector(
+          `[placeholder="${CSS.escape(normalizedValue)}"]`,
+        );
       } else if (type === "role") {
         // Parse role: button[name='Save']
-        const match = value.match(/([a-z]+)\[name='(.+?)'\]/);
+        const match = normalizedValue.match(/([a-z]+)\[name='(.+?)'\]/);
         if (match) {
           const role = match[1];
           const name = match[2];
@@ -472,23 +586,144 @@ function locateElementLegacy(step) {
     }
   }
 
-  // Legacy Fallback
+  // Legacy Fallback — require visibility to avoid returning collapsed/hidden elements
   if (selectors && selectors.css) {
     const el = safeQuerySelectorAll(selectors.css)[0];
-    if (el && el.isConnected) return el;
+    if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
   if (selector) {
     const el = safeQuerySelectorAll(selector)[0];
-    if (el && el.isConnected) return el;
+    if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
   if (selectors && selectors.id) {
     const el = document.getElementById(selectors.id);
-    if (el && el.isConnected) return el;
+    if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
   return fuzzyFallbackSearch(step);
+}
+
+/**
+ * Normalizes selector values that may include Playwright-style prefixes.
+ * @param {string} type
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizeSelectorValue(type, value) {
+  if (typeof value !== "string") return value;
+
+  if (type === "aria" && value.startsWith("aria/")) {
+    return value.slice(5);
+  }
+
+  if (type === "xpath" || type.startsWith("xpath:")) {
+    if (value.startsWith("xpath/")) return value.slice(6);
+  }
+
+  return value;
+}
+
+function isGenericIconAria(text) {
+  if (!text || typeof text !== "string") return false;
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  const genericIcons = new Set([
+    "chevron_right",
+    "chevron_left",
+    "expand_more",
+    "expand_less",
+    "west",
+    "east",
+    "north",
+    "south",
+    "menu",
+    "more_vert",
+    "more_horiz",
+    "close",
+    "add",
+    "remove",
+    "search",
+    "filter_list",
+    "edit",
+    "delete",
+    "download",
+    "file_download",
+    "upload",
+    "refresh",
+  ]);
+  return genericIcons.has(normalized);
+}
+
+function isSpecificSelector(selector) {
+  if (!selector || typeof selector !== "string") return false;
+  if (selector.includes("#")) return true;
+  return /\[(data-testid|data-cy|data-test-id|data-qa|aria-label|name|placeholder|role)=/i.test(
+    selector,
+  );
+}
+
+function normalizeTextForMatch(text) {
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeTextLoose(text) {
+  return stripIconWords(
+    normalizeTextForMatch(text)
+      .replace(/[\d()]+/g, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+}
+
+function textMatchesExpected(expected, actual) {
+  if (!expected || !actual) return false;
+  const e = normalizeTextForMatch(expected);
+  const a = normalizeTextForMatch(actual);
+  if (!e || !a) return false;
+
+  if (a === e || a.includes(e) || e.includes(a)) return true;
+
+  const eLoose = normalizeTextLoose(expected);
+  const aLoose = normalizeTextLoose(actual);
+  if (!eLoose || !aLoose) return false;
+  return (
+    aLoose === eLoose ||
+    aLoose.includes(eLoose) ||
+    eLoose.includes(aLoose)
+  );
+}
+
+function stripIconWords(text) {
+  if (!text) return "";
+  const iconWords = [
+    "chevron_right",
+    "chevron_left",
+    "expand_more",
+    "expand_less",
+    "file_download",
+    "file_upload",
+    "west",
+    "east",
+    "north",
+    "south",
+    "menu",
+    "more_vert",
+    "more_horiz",
+    "close",
+    "search",
+    "filter_list",
+    "edit",
+    "delete",
+    "download",
+    "upload",
+    "refresh",
+  ];
+  const pattern = new RegExp(`\\b(${iconWords.join("|")})\\b`, "g");
+  return text.replace(pattern, "").replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -543,7 +778,8 @@ function fuzzyFallbackSearch(step) {
  * @param {HTMLElement} element
  */
 function logSelectorSuccess(selector, element) {
-  const logMsg = `Playback: Selector "${selector}" found ${element.tagName} (ID: ${element.id}, Visible: true)`;
+  const isVisible = isElementVisible(element);
+  const logMsg = `Playback: Selector "${selector}" found ${element.tagName} (ID: ${element.id}, Visible: ${isVisible})`;
   chrome.storage.local.get("e2e_debug_logs").then(({ e2e_debug_logs = [] }) => {
     e2e_debug_logs.push(`[${new Date().toISOString()}] ${logMsg}`);
     chrome.storage.local.set({ e2e_debug_logs });
@@ -628,6 +864,29 @@ function detectNuances(element, step) {
   }
 }
 
+function isDecorativeElement(el) {
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toUpperCase();
+  return ["I", "SVG", "PATH", "USE", "SPAN"].includes(tag);
+}
+
+function getClickableAncestor(el, maxDepth = 5) {
+  let current = el;
+  let depth = 0;
+  while (current && depth < maxDepth) {
+    const tag = (current.tagName || "").toUpperCase();
+    const role = current.getAttribute && current.getAttribute("role");
+    if (tag === "BUTTON" || tag === "A") return current;
+    if (role === "button" || role === "link") return current;
+    if (current.hasAttribute && current.hasAttribute("onclick")) return current;
+    if (typeof current.tabIndex === "number" && current.tabIndex >= 0)
+      return current;
+    current = current.parentElement;
+    depth++;
+  }
+  return null;
+}
+
 /**
  * Executes a single command on the page.
  * @param {Object} step
@@ -667,6 +926,13 @@ async function executeSingleStep(step, index) {
     }
 
     if (step.action === "click") {
+      const clickableParent = isDecorativeElement(element)
+        ? getClickableAncestor(element)
+        : null;
+      if (clickableParent && clickableParent !== element) {
+        element = clickableParent;
+      }
+
       // SETTLE TIME: Give frameworks a moment to update DOM before interacting
       await new Promise((r) => setTimeout(r, 400));
 
@@ -680,8 +946,12 @@ async function executeSingleStep(step, index) {
 
       const { offsetX, offsetY } = step;
       const rect = element.getBoundingClientRect();
-      const clientX = rect.left + (offsetX || rect.width / 2);
-      const clientY = rect.top + (offsetY || rect.height / 2);
+      const clientX =
+        rect.left +
+        (clickableParent ? rect.width / 2 : offsetX || rect.width / 2);
+      const clientY =
+        rect.top +
+        (clickableParent ? rect.height / 2 : offsetY || rect.height / 2);
 
       const eventOptions = {
         bubbles: true,
@@ -862,8 +1132,14 @@ async function executeSingleStep(step, index) {
     }
   } catch (err) {
     if (err.message.includes("Element not found")) {
+      // In multi-frame pages, only one frame has the element.
+      // Log to debug logs so the runner can see what happened.
       console.log(
         `Step ${index + 1}: Element not found in this frame (${window.location.href})`,
+      );
+      logExecution(
+        `Step ${index + 1}: Element not found/not visible in frame ${window.location.href}`,
+        "warning",
       );
     } else {
       console.error(`Error executing step ${index + 1}:`, err);

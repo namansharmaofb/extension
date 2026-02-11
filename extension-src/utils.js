@@ -62,6 +62,39 @@ function getElementDescriptor(element) {
   if (element.getAttribute("aria-label"))
     return element.getAttribute("aria-label");
 
+  // For inputs/textareas, prioritize associated label text
+  if (
+    element.tagName === "INPUT" ||
+    element.tagName === "TEXTAREA" ||
+    element.tagName === "SELECT"
+  ) {
+    // 1. Label by for attribute
+    if (element.id) {
+      const label = document.querySelector(
+        `label[for="${CSS.escape(element.id)}"]`,
+      );
+      if (label) {
+        const labelText = getVisibleText(label);
+        if (labelText) return labelText;
+      }
+    }
+    // 2. Wrap label
+    const wrapLabel = element.closest("label");
+    if (wrapLabel) {
+      const labelText = getVisibleText(wrapLabel);
+      if (labelText) return labelText;
+    }
+    // 3. aria-labelledby
+    const labelledBy = element.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      const labelEl = document.getElementById(labelledBy);
+      if (labelEl) {
+        const labelText = getVisibleText(labelEl);
+        if (labelText) return labelText;
+      }
+    }
+  }
+
   const text = getVisibleText(element);
   if (text) return text;
 

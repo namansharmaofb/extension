@@ -360,10 +360,15 @@ function generatePuppeteerCode(testCase) {
       "css";
 
     let finalSelector = selector;
-    if (selectorType === "id") finalSelector = `#${selector.replace(/^#/, "")}`;
-    else if (selectorType === "xpath" || selectorType.startsWith("xpath:"))
+    if (selectorType === "aria" || (selector && selector.startsWith("aria/"))) {
+      const ariaText = selector.replace(/^aria\//, "");
+      const safeAria = ariaText.replace(/"/g, '\\"');
+      finalSelector = `[aria-label="${safeAria}"]`;
+    } else if (selectorType === "id") {
+      finalSelector = `#${selector.replace(/^#/, "")}`;
+    } else if (selectorType === "xpath" || selectorType.startsWith("xpath:")) {
       finalSelector = `xpath/${selector.replace(/^xpath=/, "")}`;
-    else if (selectorType === "testId")
+    } else if (selectorType === "testId")
       finalSelector = `[data-testid="${selector}"],[data-cy="${selector}"],[data-test-id="${selector}"],[data-qa="${selector}"]`;
     else if (selectorType === "placeholder")
       finalSelector = `[placeholder="${selector}"]`;
