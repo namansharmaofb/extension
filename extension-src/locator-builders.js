@@ -257,7 +257,13 @@ function generateSelectors(element) {
 
   // 7. XPath with text (for links and buttons with visible text)
   const text = getVisibleText(element).replace(/\s+/g, " ").trim();
-  if (text && text.length > 0 && text.length < 50 && !text.includes("'")) {
+  if (
+    text &&
+    text.length > 0 &&
+    text.length < 50 &&
+    !text.includes("'") &&
+    !isGenericIconText(text)
+  ) {
     const tag = element.tagName.toLowerCase();
     // Use normalize-space(.) to handle non-breaking spaces and erratic whitespace in text matches
     selectors.push([`xpath///${tag}[normalize-space(.)='${text}']`]);
@@ -281,9 +287,43 @@ function generateSelectors(element) {
     selectors.push([`xpath//${xpath}`]);
   }
 
+  // REORDER: Prefer stable attribute selectors first, then aria, then css, then xpath
+  const orderedSelectors = [];
+  const used = new Set();
+
+  const addGroup = (predicate) => {
+    selectors.forEach((s, idx) => {
+      if (used.has(idx)) return;
+      if (predicate(s[0])) {
+        orderedSelectors.push(s);
+        used.add(idx);
+      }
+    });
+  };
+
+  const hasDataAttr = (sel) =>
+    sel.includes("[data-testid") ||
+    sel.includes("[data-cy") ||
+    sel.includes("[data-test") ||
+    sel.includes("[data-qa");
+  const hasName = (sel) => sel.includes("[name=");
+  const hasPlaceholder = (sel) => sel.includes("[placeholder=");
+  const isId = (sel) => sel.startsWith("#");
+  const isAria = (sel) => sel.startsWith("aria/");
+  const isXpath = (sel) => sel.startsWith("xpath/");
+
+  addGroup(hasDataAttr);
+  addGroup(hasName);
+  addGroup(hasPlaceholder);
+  addGroup(isId);
+  addGroup(isAria);
+  addGroup((sel) => !isXpath(sel) && !isAria(sel)); // CSS and other non-xpath selectors
+  addGroup(isXpath);
+  addGroup(() => true); // any leftover
+
   // REORDER: Push any selectors containing :nth- (fragile) to the end of the list
-  const robustSelectors = selectors.filter((s) => !s[0].includes(":nth-"));
-  const fragileSelectors = selectors.filter((s) => s[0].includes(":nth-"));
+  const robustSelectors = orderedSelectors.filter((s) => !s[0].includes(":nth-"));
+  const fragileSelectors = orderedSelectors.filter((s) => s[0].includes(":nth-"));
   const reorderedSelectors = [...robustSelectors, ...fragileSelectors];
 
   // Build the result object
@@ -327,6 +367,7 @@ function buildAriaSelector(element) {
   ) {
     // Normalize whitespace for the final selector string
     const finalName = accessibleName.replace(/\s+/g, " ").trim();
+    if (isGenericIconText(finalName)) return null;
     // Format: aria/accessible name
     return `aria/${finalName}`;
   }
@@ -358,6 +399,45 @@ function isDynamic(value) {
   // Allow common stable prefixes
   if (/^(mui|btn|nav|list|item|cell)-/i.test(value)) return false;
   return /\d{5,}|uuid|random|test-?id|tfid-/i.test(value);
+}
+
+function isGenericIconText(text) {
+  if (!text || typeof text !== "string") return false;
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  const iconWords = new Set([
+    "chevron_right",
+    "chevron_left",
+    "expand_more",
+    "expand_less",
+    "file_download",
+    "file_upload",
+    "west",
+    "east",
+    "north",
+    "south",
+    "menu",
+    "more_vert",
+    "more_horiz",
+    "close",
+    "add",
+    "remove",
+    "search",
+    "filter_list",
+    "edit",
+    "delete",
+    "download",
+    "upload",
+    "refresh",
+  ]);
+
+  // Single icon word
+  if (iconWords.has(normalized)) return true;
+
+  // If text is made only of icon words, treat as generic
+  const parts = normalized.split(" ").filter(Boolean);
+  if (parts.length > 0 && parts.every((p) => iconWords.has(p))) return true;
+
+  return false;
 }
 
 function isDynamicId(id) {

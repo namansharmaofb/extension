@@ -34,17 +34,32 @@ async function executeCurrentStep() {
       clearTimeout(executionState.stepTimeout);
     }
 
-    // Set a timeout for this step (30 seconds for reliability with slow pages)
-    // If no frame responds with STEP_COMPLETE, we fail.
+    const isScrollStep = step.action === "scroll";
+    const stepTimeoutMs = isScrollStep ? 4000 : 30000;
+
+    // Set a timeout for this step.
+    // If no frame responds with STEP_COMPLETE, we fail (or auto-advance for scroll).
     executionState.stepTimeout = setTimeout(() => {
       console.error(
         `Timeout waiting for step ${executionState.currentIndex + 1}/${executionState.steps.length}`,
       );
+
+      if (isScrollStep) {
+        // Scroll steps are best-effort; auto-advance to avoid stalls.
+        if (executionState.stepTimeout) {
+          clearTimeout(executionState.stepTimeout);
+          executionState.stepTimeout = null;
+        }
+        executionState.currentIndex++;
+        setTimeout(() => executeCurrentStep(), 500);
+        return;
+      }
+
       finishExecution(
         false,
         `Timeout waiting for step ${executionState.currentIndex + 1}`,
       );
-    }, 30000);
+    }, stepTimeoutMs);
 
     const tab = await chrome.tabs.get(executionState.tabId);
 
