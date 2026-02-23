@@ -193,7 +193,34 @@ async function executeCurrentStep() {
       );
     }, stepTimeoutMs);
 
-    const tab = await chrome.tabs.get(executionState.tabId);
+    let tab;
+    try {
+      tab = await chrome.tabs.get(executionState.tabId);
+    } catch (tabErr) {
+      // Tab ID is stale — try to find the correct tab by URL
+      console.warn(
+        `Tab ${executionState.tabId} not found, searching for localhost tab...`,
+      );
+      const allTabs = await chrome.tabs.query({});
+      const localhostTab = allTabs.find(
+        (t) =>
+          t.url &&
+          (t.url.includes("localhost:3007") ||
+            t.url.includes("localhost:3000")),
+      );
+      if (localhostTab) {
+        console.log(
+          `Recovered: using tab ${localhostTab.id} (${localhostTab.url})`,
+        );
+        executionState.tabId = localhostTab.id;
+        tab = localhostTab;
+        await saveExecutionState();
+      } else {
+        throw new Error(
+          `No tab with id: ${executionState.tabId} and no localhost tab found`,
+        );
+      }
+    }
 
     // Check if we need to navigate
     const currentUrl = normalizeUrl(tab.url);
@@ -202,7 +229,7 @@ async function executeCurrentStep() {
 
     // For interaction steps (click, input, scroll), we use path-only matching
     // to avoid unwanted reloads when query parameters change in an SPA.
-    const isInteractionStep = ["click", "input", "scroll"].includes(
+    const isInteractionStep = ["click", "input", "scroll", "upload"].includes(
       step.action,
     );
     const urlsMatch = isInteractionStep

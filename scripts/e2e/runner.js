@@ -764,6 +764,22 @@ async function executeTestCase(browser, page, testCaseId) {
 
   page.on("console", (msg) => console.log(`PAGE CONSOLE: ${msg.text()}`));
 
+  // Auto-handle file upload dialogs with a dummy test PDF
+  const testUploadFile = path.resolve(__dirname, "test-upload.pdf");
+  page.on("filechooser", async (fileChooser) => {
+    console.log(
+      `${CYAN}[Upload]${RESET} File chooser detected, uploading: ${testUploadFile}`,
+    );
+    try {
+      await fileChooser.accept([testUploadFile]);
+      console.log(`${GREEN}[Upload]${RESET} File uploaded successfully.`);
+    } catch (err) {
+      console.error(
+        `${RED}[Upload]${RESET} File upload failed: ${err.message}`,
+      );
+    }
+  });
+
   // Always re-find the worker to avoid "Execution context is not available" errors if it suspended
   const worker = await getWorker(browser);
 
@@ -1283,8 +1299,59 @@ async function runE2E() {
     console.log(`Planned execution: ${testIds.length} flows.`);
     const results = [];
 
-    for (const id of testIds) {
+    for (let flowIdx = 0; flowIdx < testIds.length; flowIdx++) {
+      const id = testIds[flowIdx];
       console.log(`\n=== Starting Flow ID: ${id} ===`);
+
+      // Reset extension execution state before each flow to prevent stale tabId / timers
+      try {
+        const worker = await getWorker(browser);
+        await worker.evaluate(async () => {
+          if (typeof executionState !== "undefined") {
+            if (executionState.stepTimeout) {
+              clearTimeout(executionState.stepTimeout);
+              executionState.stepTimeout = null;
+            }
+            executionState = {
+              isRunning: false,
+              tabId: null,
+              steps: [],
+              currentIndex: 0,
+              waitingForNavigation: false,
+              stepResults: [],
+              testId: null,
+              startTime: null,
+            };
+            await chrome.storage.local.set({
+              execution_state_v2: executionState,
+            });
+          }
+          await chrome.storage.local.set({ e2e_debug_logs: [] });
+        });
+      } catch (resetErr) {
+        console.warn(
+          `Failed to reset worker state before flow ${id}: ${resetErr.message}`,
+        );
+      }
+
+      // Navigate back to TARGET_URL so each flow starts from a clean page
+      try {
+        const currentUrl = page.url();
+        if (
+          !currentUrl ||
+          !currentUrl.includes("localhost:3007") ||
+          currentUrl !== TARGET_URL
+        ) {
+          console.log(`Navigating back to ${TARGET_URL} before flow ${id}...`);
+          await page.goto(TARGET_URL, { waitUntil: "load", timeout: 60000 });
+          await new Promise((r) => setTimeout(r, 3000)); // Let page settle
+        }
+      } catch (navErr) {
+        console.warn(
+          `Navigation to TARGET_URL before flow ${id} failed: ${navErr.message}`,
+        );
+      }
+
       try {
         await executeTestCase(browser, page, id);
         results.push({ id, status: "SUCCESS" });
@@ -1299,6 +1366,11 @@ async function runE2E() {
           console.error("Login failed. Skipping remaining tests.");
           break;
         }
+      }
+
+      // Wait between flows to let browser settle
+      if (flowIdx < testIds.length - 1) {
+        await new Promise((r) => setTimeout(r, 3000));
       }
     }
 
