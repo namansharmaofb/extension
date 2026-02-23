@@ -1,1 +1,32 @@
+# Dependencies
+node_modules/
+backend/node_modules/
 
+# Environment files
+.env
+scripts/e2e/.env
+
+# Chrome test profile (login cookies, caches, etc.)
+scripts/e2e/.chrome-test-profile/
+
+# E2E test artifacts
+scripts/e2e/screenshots/
+scripts/e2e/aria-snapshots/
+scripts/e2e/bug_reports.json
+scripts/e2e/output.json
+scripts/e2e/*.txt
+scripts/e2e/*.json
+!scripts/e2e/package.json
+!scripts/e2e/package-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
