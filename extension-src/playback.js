@@ -253,6 +253,8 @@ function isStepTargetingDate(step) {
 
 function locateElement(step) {
   let element = null;
+  const requiredRoot = getSelectorRootHint(step);
+  const overlayRoot = getActiveOverlayRoot(step) || requiredRoot;
   // 1. Try new selector array format (or nested selectors object)
   const selectorArray = Array.isArray(step.selectors)
     ? step.selectors
@@ -264,20 +266,51 @@ function locateElement(step) {
       selectorArray === step.selectors
         ? step
         : { ...step, selectors: selectorArray };
-    element = locateElementWithSelectorArray(stepWithArray);
+    element = locateElementWithSelectorArray(
+      stepWithArray,
+      overlayRoot,
+      requiredRoot,
+    );
   }
 
   // 2. Try legacy single selector if array fails or is missing
   if (!element) {
-    element = locateElementLegacy(step);
+    element = locateElementLegacy(step, overlayRoot, requiredRoot);
   }
 
-  // 3. Try fuzzy search as last resort before giving up
+  // 3. Modal/Drawer scoped search — if a modal or drawer is open,
+  // search within it using the step description BEFORE falling back to
+  // full-page fuzzy search. This is more accurate when a modal is open.
   if (!element) {
-    element = fuzzyFallbackSearch(step);
+    if (overlayRoot) {
+      element = searchWithinOverlay(overlayRoot, step);
+    }
   }
 
-  // 4. Try deep shadow DOM search for the main selector (only return visible)
+  // 3b. Nested modal fallback — if topmost overlay didn't have the element,
+  // try other open overlays in z-index order (handles parent modal behind confirm dialog)
+  if (!element && step.insideModal) {
+    const allOverlays = findAllActiveOverlays(step);
+    for (const overlay of allOverlays) {
+      if (overlay === overlayRoot) continue; // already tried
+      const result = searchWithinOverlay(overlay, step);
+      if (result) {
+        logExecution(
+          `Nested modal fallback: found element in overlay #${allOverlays.indexOf(overlay)}`,
+          "info",
+        );
+        element = result;
+        break;
+      }
+    }
+  }
+
+  // 4. Try full-page fuzzy search as last resort before giving up
+  if (!element) {
+    element = fuzzyFallbackSearch(step, overlayRoot, requiredRoot);
+  }
+
+  // 5. Try deep shadow DOM search for the main selector (only return visible)
   if (!element && step.target) {
     const target = step.target;
     // Don't pass prefixed ones to querySelector
@@ -287,7 +320,21 @@ function locateElement(step) {
       !target.startsWith("//")
     ) {
       const shadowEl = deepQuerySelector(target);
-      if (shadowEl && isElementVisible(shadowEl)) {
+      if (
+        shadowEl &&
+        isElementVisible(shadowEl) &&
+        (!overlayRoot || overlayRoot.contains(shadowEl))
+      ) {
+        element = shadowEl;
+      } else if (
+        shadowEl &&
+        isElementVisible(shadowEl) &&
+        (!requiredRoot || requiredRoot.contains(shadowEl))
+      ) {
+        logExecution(
+          `Shadow match outside active modal — using as fallback for ${target}`,
+          "info",
+        );
         element = shadowEl;
       }
     }
@@ -301,8 +348,13 @@ function locateElement(step) {
  * @param {Object} step
  * @returns {HTMLElement|null}
  */
-function locateElementWithSelectorArray(step) {
+function locateElementWithSelectorArray(
+  step,
+  overlayRoot = getActiveOverlayRoot(step) || getSelectorRootHint(step),
+  requiredRoot = null,
+) {
   const { selectors } = step;
+  let penalizedCandidate = null; // Soft filtering: save elements found outside modal
 
   for (const selectorGroup of selectors) {
     const selector = Array.isArray(selectorGroup)
@@ -327,6 +379,8 @@ function locateElementWithSelectorArray(step) {
           continue;
         }
         let elements = findAllByAriaLabel(ariaText);
+        elements = preferElementsInOverlay(elements, overlayRoot);
+        elements = filterToRequiredRoot(elements, requiredRoot);
 
         // If a role was specified (e.g. aria/textbox[Label]), filter by role
         if (ariaRole && elements.length > 0) {
@@ -377,6 +431,25 @@ function locateElementWithSelectorArray(step) {
         }
 
         if (el) {
+          if (
+            overlayRoot &&
+            isElementActuallyVisible(overlayRoot) &&
+            !overlayRoot.contains(el)
+          ) {
+            logExecution(
+              `Match outside active modal — saving as penalized candidate for ${selector}`,
+              "info",
+            );
+            if (!penalizedCandidate && !requiredRoot) penalizedCandidate = el;
+            continue;
+          }
+          if (requiredRoot && !requiredRoot.contains(el)) {
+            logExecution(
+              `Match outside required modal root — skipping ${selector}`,
+              "info",
+            );
+            continue;
+          }
           logSelectorSuccess(selector, el);
           return el;
         } else {
@@ -389,7 +462,9 @@ function locateElementWithSelectorArray(step) {
       // XPath selector
       else if (selector.startsWith("xpath/")) {
         const xpath = selector.slice(6);
-        const els = getElementsByXPath(xpath);
+        let els = getElementsByXPath(xpath);
+        els = preferElementsInOverlay(els, overlayRoot);
+        els = filterToRequiredRoot(els, requiredRoot);
 
         // Similar priority strategy for XPath
         const expectedText = (step.description || "").toLowerCase().trim();
@@ -416,6 +491,25 @@ function locateElementWithSelectorArray(step) {
         }
 
         if (el) {
+          if (
+            overlayRoot &&
+            isElementActuallyVisible(overlayRoot) &&
+            !overlayRoot.contains(el)
+          ) {
+            logExecution(
+              `Match outside active modal — saving as penalized candidate for ${selector}`,
+              "info",
+            );
+            if (!penalizedCandidate && !requiredRoot) penalizedCandidate = el;
+            continue;
+          }
+          if (requiredRoot && !requiredRoot.contains(el)) {
+            logExecution(
+              `Match outside required modal root — skipping ${selector}`,
+              "info",
+            );
+            continue;
+          }
           logSelectorSuccess(selector, el);
           return el;
         } else if (els.length > 0) {
@@ -433,7 +527,18 @@ function locateElementWithSelectorArray(step) {
       // CSS selector (default)
       else {
         // Try normal first
-        const elements = safeQuerySelectorAll(selector);
+        const explicitRoot = getExplicitRootFromSelector(selector);
+        let elements = explicitRoot
+          ? safeQuerySelectorAll(selector, explicitRoot)
+          : safeQuerySelectorAll(selector);
+        if (explicitRoot && elements.length === 0) {
+          elements = safeQuerySelectorAll(selector);
+        }
+        elements = preferElementsInOverlay(
+          elements,
+          overlayRoot || explicitRoot,
+        );
+        elements = filterToRequiredRoot(elements, requiredRoot);
 
         // Strategy: 1. Visible and matches text description
         // 2. Visible
@@ -499,6 +604,25 @@ function locateElementWithSelectorArray(step) {
         }
 
         if (el) {
+          if (
+            overlayRoot &&
+            isElementActuallyVisible(overlayRoot) &&
+            !overlayRoot.contains(el)
+          ) {
+            logExecution(
+              `Match outside active modal — saving as penalized candidate for ${selector}`,
+              "info",
+            );
+            if (!penalizedCandidate && !requiredRoot) penalizedCandidate = el;
+            continue;
+          }
+          if (requiredRoot && !requiredRoot.contains(el)) {
+            logExecution(
+              `Match outside required modal root — skipping ${selector}`,
+              "info",
+            );
+            continue;
+          }
           logSelectorSuccess(selector, el);
           return el;
         } else if (elements.length > 0) {
@@ -542,6 +666,31 @@ function locateElementWithSelectorArray(step) {
         return anyVisibleOption;
       }
     }
+  }
+
+  // --- MODAL-SCOPED FALLBACK ---
+  // If all selectors failed and a modal is active, try searching within it.
+  // This is a targeted fallback specifically for when all CSS/XPath/ARIA selectors
+  // fail but the element is clearly inside a visible modal.
+  const activeOverlay = overlayRoot || findActiveOverlay(step);
+  if (activeOverlay) {
+    logExecution(
+      `locateElementWithSelectorArray: all selectors failed, attempting modal-scoped search`,
+      "info",
+    );
+    const overlayResult = searchWithinOverlay(activeOverlay, step);
+    if (overlayResult) return overlayResult;
+  }
+
+  // Soft filtering fallback: return penalized candidate found outside modal
+  // This handles portaled dropdowns, tooltips, and React portals that render
+  // outside the modal DOM tree but are logically part of it.
+  if (penalizedCandidate) {
+    logExecution(
+      `Using penalized (outside-modal) candidate as fallback: ${penalizedCandidate.tagName}`,
+      "warning",
+    );
+    return penalizedCandidate;
   }
 
   return null;
@@ -680,7 +829,11 @@ function findByAriaLabel(ariaText) {
  * @param {Object} step
  * @returns {HTMLElement|null}
  */
-function locateElementLegacy(step) {
+function locateElementLegacy(
+  step,
+  overlayRoot = getActiveOverlayRoot(step) || getSelectorRootHint(step),
+  requiredRoot = null,
+) {
   const { targets, target, selectors, selector, selectorType } = step;
 
   const activeTargets = [];
@@ -733,6 +886,7 @@ function locateElementLegacy(step) {
     }
   }
 
+  let penalizedCandidate = null;
   // 2. Try each locator strategy
   for (const locator of activeTargets) {
     try {
@@ -741,9 +895,11 @@ function locateElementLegacy(step) {
       const normalizedValue = normalizeSelectorValue(type, value);
 
       if (type === "id") {
-        const elements = document.querySelectorAll(
+        let elements = document.querySelectorAll(
           `[id="${CSS.escape(normalizedValue)}"]`,
         );
+        elements = preferElementsInOverlay(Array.from(elements), overlayRoot);
+        elements = filterToRequiredRoot(elements, requiredRoot);
         for (const candidate of elements) {
           if (isElementVisible(candidate)) {
             el = candidate;
@@ -751,7 +907,18 @@ function locateElementLegacy(step) {
           }
         }
       } else if (type === "css" || type === "css:finder") {
-        const elements = safeQuerySelectorAll(normalizedValue);
+        const explicitRoot = getExplicitRootFromSelector(normalizedValue);
+        let elements = explicitRoot
+          ? safeQuerySelectorAll(normalizedValue, explicitRoot)
+          : safeQuerySelectorAll(normalizedValue);
+        if (explicitRoot && elements.length === 0) {
+          elements = safeQuerySelectorAll(normalizedValue);
+        }
+        elements = preferElementsInOverlay(
+          elements,
+          overlayRoot || explicitRoot,
+        );
+        elements = filterToRequiredRoot(elements, requiredRoot);
         const expectedText = (
           step.description ||
           step.selectors?.innerText ||
@@ -806,12 +973,21 @@ function locateElementLegacy(step) {
           );
           continue;
         }
-        el = findByAriaLabel(ariaName);
+        const ariaCandidates = preferElementsInOverlay(
+          findAllByAriaLabel(ariaName),
+          overlayRoot,
+        );
+        const filteredAria = filterToRequiredRoot(ariaCandidates, requiredRoot);
+        el = filteredAria.find(isElementVisible) || filteredAria[0] || null;
       } else if (type === "xpath" || type.startsWith("xpath:")) {
-        const els = getElementsByXPath(normalizedValue);
+        let els = getElementsByXPath(normalizedValue);
+        els = preferElementsInOverlay(els, overlayRoot);
+        els = filterToRequiredRoot(els, requiredRoot);
         if (els.length > 0) el = els[0];
       } else if (type === "linkText") {
-        const links = document.getElementsByTagName("a");
+        let links = Array.from(document.getElementsByTagName("a"));
+        links = preferElementsInOverlay(links, overlayRoot);
+        links = filterToRequiredRoot(links, requiredRoot);
         for (const link of links) {
           const lText = getVisibleText(link)
             .replace(/\s+/g, " ")
@@ -824,24 +1000,51 @@ function locateElementLegacy(step) {
           }
         }
       } else if (type === "name") {
-        el = document.querySelector(`[name="${CSS.escape(normalizedValue)}"]`);
+        const candidates = preferElementsInOverlay(
+          Array.from(
+            document.querySelectorAll(
+              `[name="${CSS.escape(normalizedValue)}"]`,
+            ),
+          ),
+          overlayRoot,
+        );
+        const filtered = filterToRequiredRoot(candidates, requiredRoot);
+        el = filtered[0] || null;
       } else if (type === "testId") {
-        el = document.querySelector(
-          `[data-testid="${CSS.escape(normalizedValue)}"], [data-cy="${CSS.escape(normalizedValue)}"], [data-test-id="${CSS.escape(normalizedValue)}"], [data-qa="${CSS.escape(normalizedValue)}"]`,
+        const candidates = preferElementsInOverlay(
+          Array.from(
+            document.querySelectorAll(
+              `[data-testid="${CSS.escape(normalizedValue)}"], [data-cy="${CSS.escape(normalizedValue)}"], [data-test-id="${CSS.escape(normalizedValue)}"], [data-qa="${CSS.escape(normalizedValue)}"]`,
+            ),
+          ),
+          overlayRoot,
         );
+        const filtered = filterToRequiredRoot(candidates, requiredRoot);
+        el = filtered[0] || null;
       } else if (type === "placeholder") {
-        el = document.querySelector(
-          `[placeholder="${CSS.escape(normalizedValue)}"]`,
+        const candidates = preferElementsInOverlay(
+          Array.from(
+            document.querySelectorAll(
+              `[placeholder="${CSS.escape(normalizedValue)}"]`,
+            ),
+          ),
+          overlayRoot,
         );
+        const filtered = filterToRequiredRoot(candidates, requiredRoot);
+        el = filtered[0] || null;
       } else if (type === "role") {
         // Parse role: button[name='Save']
         const match = normalizedValue.match(/([a-z]+)\[name='(.+?)'\]/);
         if (match) {
           const role = match[1];
           const name = match[2];
-          const candidates = document.querySelectorAll(
-            role === "textbox" ? "input, textarea" : role,
+          let candidates = Array.from(
+            document.querySelectorAll(
+              role === "textbox" ? "input, textarea" : role,
+            ),
           );
+          candidates = preferElementsInOverlay(candidates, overlayRoot);
+          candidates = filterToRequiredRoot(candidates, requiredRoot);
           for (const candidate of candidates) {
             const cName =
               candidate.getAttribute("aria-label") ||
@@ -857,6 +1060,37 @@ function locateElementLegacy(step) {
       }
 
       if (el) {
+        if (
+          overlayRoot &&
+          isElementActuallyVisible(overlayRoot) &&
+          !overlayRoot.contains(el)
+        ) {
+          // Before penalizing, check if element is inside the FULL overlay (not just narrowed root)
+          const fullOverlay = overlayRoot.closest(
+            '.modal, .MuiDialog-root, .MuiDrawer-root, .MuiModal-root, [role="dialog"], [role="alertdialog"], [aria-modal="true"]',
+          );
+          if (fullOverlay && fullOverlay.contains(el)) {
+            logExecution(
+              `Legacy match inside full overlay (but outside narrowed root) for ${type}=${value} — accepting`,
+              "info",
+            );
+            // Element IS inside the full modal — proceed to visibility check below
+          } else {
+            logExecution(
+              `Match outside active modal — saving as penalized candidate for legacy strategy ${type}=${value}`,
+              "info",
+            );
+            if (!penalizedCandidate && !requiredRoot) penalizedCandidate = el;
+            continue;
+          }
+        }
+        if (requiredRoot && !requiredRoot.contains(el)) {
+          logExecution(
+            `Match outside required modal root — skipping legacy ${type}=${value}`,
+            "info",
+          );
+          continue;
+        }
         // --- DYNAMIC DATE PICKER OVERRIDE ---
         // If the element is a React datepicker day, but the specific label (e.g. "Choose Wednesday, February 25th")
         // was requested and not found, try to just click today's date instead of failing.
@@ -878,14 +1112,47 @@ function locateElementLegacy(step) {
     }
   }
 
+  // Soft filtering fallback: return penalized candidate found outside modal
+  if (penalizedCandidate) {
+    logExecution(
+      `Using penalized (outside-modal) candidate as legacy fallback: ${penalizedCandidate.tagName}`,
+      "warning",
+    );
+    return penalizedCandidate;
+  }
+
   // Legacy Fallback — require visibility to avoid returning collapsed/hidden elements
   if (selectors && selectors.css) {
-    const el = safeQuerySelectorAll(selectors.css)[0];
+    const explicitRoot = getExplicitRootFromSelector(selectors.css);
+    let candidates = explicitRoot
+      ? safeQuerySelectorAll(selectors.css, explicitRoot)
+      : safeQuerySelectorAll(selectors.css);
+    if (explicitRoot && candidates.length === 0) {
+      candidates = safeQuerySelectorAll(selectors.css);
+    }
+    candidates = preferElementsInOverlay(
+      candidates,
+      overlayRoot || explicitRoot,
+    );
+    candidates = filterToRequiredRoot(candidates, requiredRoot);
+    const el = candidates[0];
     if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
   if (selector) {
-    const el = safeQuerySelectorAll(selector)[0];
+    const explicitRoot = getExplicitRootFromSelector(selector);
+    let candidates = explicitRoot
+      ? safeQuerySelectorAll(selector, explicitRoot)
+      : safeQuerySelectorAll(selector);
+    if (explicitRoot && candidates.length === 0) {
+      candidates = safeQuerySelectorAll(selector);
+    }
+    candidates = preferElementsInOverlay(
+      candidates,
+      overlayRoot || explicitRoot,
+    );
+    candidates = filterToRequiredRoot(candidates, requiredRoot);
+    const el = candidates[0];
     if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
@@ -1037,11 +1304,425 @@ function stripIconWords(text) {
 }
 
 /**
+ * Checks if a Bootstrap 4 modal element is currently open/shown.
+ * Uses fast Bootstrap-specific checks first, then falls back to strict visibility.
+ * @param {HTMLElement} el
+ * @returns {boolean}
+ */
+function isBootstrapModalVisible(el) {
+  if (!el || !el.classList.contains("modal")) return false;
+  // Bootstrap 4 adds 'show' class when open.
+  // Alternatively, display:block is set by Bootstrap JS.
+  const hasOpenIndicator =
+    el.classList.contains("show") || el.style.display === "block";
+  // Strict check: must have indicator AND be visible
+  return hasOpenIndicator && isElementActuallyVisible(el);
+}
+
+function preferElementsInOverlay(elements, overlayRoot) {
+  if (!overlayRoot || !Array.isArray(elements)) return elements;
+  const inside = elements.filter((el) => overlayRoot.contains(el));
+  if (inside.length > 0) return inside;
+
+  // If nothing found in the narrowed root, also check the full overlay ancestor
+  // (e.g. overlayRoot is .modal-content but the element is in .modal which wraps it)
+  const fullOverlay = overlayRoot.closest(
+    '.modal, .MuiDialog-root, .MuiDrawer-root, .MuiModal-root, [role="dialog"], [role="alertdialog"], [aria-modal="true"]',
+  );
+  if (fullOverlay && fullOverlay !== overlayRoot) {
+    const insideFull = elements.filter((el) => fullOverlay.contains(el));
+    if (insideFull.length > 0) return insideFull;
+  }
+
+  return elements;
+}
+
+function filterToRequiredRoot(elements, requiredRoot) {
+  if (!requiredRoot || !Array.isArray(elements)) return elements;
+  return elements.filter((el) => requiredRoot.contains(el));
+}
+
+function extractIdFromSelector(selector) {
+  if (!selector || typeof selector !== "string") return null;
+  // Basic #id extraction (stops before space, dot, bracket, colon, or combinator)
+  const match = selector.match(/#([A-Za-z0-9\-_:.]+)/);
+  if (match && match[1]) return match[1];
+  const attrMatch = selector.match(/\[id=["']([^"']+)["']\]/);
+  if (attrMatch && attrMatch[1]) return attrMatch[1];
+  return null;
+}
+
+function getExplicitRootFromSelector(selector) {
+  const id = extractIdFromSelector(selector);
+  if (!id) return null;
+  const el = document.getElementById(id);
+  if (el && isElementActuallyVisible(el)) return el;
+  return null;
+}
+
+function getSelectorRootHint(step) {
+  const selectors = Array.isArray(step.selectors)
+    ? step.selectors
+    : Array.isArray(step.selectors?.selectors)
+      ? step.selectors.selectors
+      : [];
+
+  for (const group of selectors) {
+    const selector = Array.isArray(group) ? group[0] : group;
+    const id = extractIdFromSelector(selector);
+    if (!id) continue;
+    const el = document.getElementById(id);
+    if (el && isElementActuallyVisible(el)) return el;
+  }
+
+  const directSelector = step.selector || step.target || "";
+  const directId = extractIdFromSelector(directSelector);
+  if (directId) {
+    const el = document.getElementById(directId);
+    if (el && isElementActuallyVisible(el)) return el;
+  }
+
+  return null;
+}
+
+/**
+ * Finds the topmost active overlay (modal, drawer, dialog) on the page.
+ * Uses recorded context from the step (selector, text, index) if available
+ * to disambiguate between multiple open overlays.
+ * @param {Object} [step] - The execution step containing modal context
+ * @returns {HTMLElement|null}
+ */
+function findActiveOverlay(step = {}) {
+  const { modalSelector, modalText, modalIndex } = step;
+
+  // 1. If we have a specific selector from recording, try it first
+  if (modalSelector) {
+    const candidate = document.querySelector(modalSelector);
+    if (candidate && isElementActuallyVisible(candidate)) {
+      // If we also have text/index, verify they match (disambiguation)
+      let matches = true;
+      if (modalText) {
+        const titleEl = candidate.querySelector(
+          ".modal-title, [class*='title' i], h1, h2, h3, h4, h5",
+        );
+        const currentText = titleEl ? titleEl.textContent.trim() : "";
+        if (
+          currentText &&
+          !currentText.includes(modalText) &&
+          !modalText.includes(currentText)
+        ) {
+          matches = false;
+        }
+      }
+
+      if (matches) return candidate;
+    }
+  }
+
+  // 2. Fallback: Find all visible overlays and pick the best match
+  const overlays = [
+    ...document.querySelectorAll(
+      ".modal.show, .modal[style*='display: block'], .modal[style*='display:block'], .MuiDrawer-root, .MuiDialog-root, .MuiModal-root, [role='dialog'], [role='alertdialog'], [aria-modal='true']",
+    ),
+  ].filter(isElementActuallyVisible);
+
+  if (overlays.length === 0) return null;
+
+  // 3. Multi-modal disambiguation by text
+  if (modalText && overlays.length > 1) {
+    const textMatch = overlays.find((ov) => {
+      const titleEl = ov.querySelector(
+        ".modal-title, [class*='title' i], h1, h2, h3, h4, h5",
+      );
+      const currentText = titleEl ? titleEl.textContent.trim() : "";
+      return (
+        currentText &&
+        (currentText.includes(modalText) || modalText.includes(currentText))
+      );
+    });
+    if (textMatch) return textMatch;
+  }
+
+  // 4. Multi-modal disambiguation by index
+  if (
+    typeof modalIndex === "number" &&
+    modalIndex >= 0 &&
+    overlays.length > modalIndex
+  ) {
+    return overlays[modalIndex];
+  }
+
+  // 5. Default: Sort by z-index descending and pick the top one
+  overlays.sort((a, b) => {
+    return getZIndex(b) - getZIndex(a);
+  });
+
+  return overlays[0];
+}
+
+/**
+ * Returns ALL active overlays sorted by z-index (topmost first).
+ * Unlike findActiveOverlay which returns only one, this returns the full list
+ * for nested modal support.
+ * @param {Object} [step]
+ * @returns {HTMLElement[]}
+ */
+function findAllActiveOverlays(step = {}) {
+  const overlays = [
+    ...document.querySelectorAll(
+      ".modal.show, .modal[style*='display: block'], .modal[style*='display:block'], .MuiDrawer-root, .MuiDialog-root, .MuiModal-root, [role='dialog'], [role='alertdialog'], [aria-modal='true']",
+    ),
+  ].filter(isElementActuallyVisible);
+
+  if (overlays.length === 0) return [];
+
+  overlays.sort((a, b) => getZIndex(b) - getZIndex(a));
+  return overlays;
+}
+
+function getActiveOverlayRoot(step = {}) {
+  const overlay = findActiveOverlay(step);
+  if (!overlay) return null;
+
+  // For Bootstrap 4 modals: use .modal-content which wraps BOTH .modal-body
+  // AND .modal-footer. Using .modal-body alone excludes footer submit buttons.
+  if (overlay.classList && overlay.classList.contains("modal-dialog")) {
+    return overlay.querySelector(".modal-content") || overlay;
+  }
+
+  // For Bootstrap 4 modal (if .modal was returned directly)
+  if (overlay.classList && overlay.classList.contains("modal")) {
+    return (
+      overlay.querySelector(".modal-content") ||
+      overlay.querySelector(".modal-dialog") ||
+      overlay
+    );
+  }
+
+  // For MUI dialogs: use the dialog paper (which includes title, content, and actions)
+  if (
+    overlay.classList &&
+    (overlay.classList.contains("MuiDialog-root") ||
+      overlay.classList.contains("MuiModal-root"))
+  ) {
+    return overlay.querySelector(".MuiDialog-paper, .MuiPaper-root") || overlay;
+  }
+
+  // For generic overlays, return the overlay itself to include all children
+  // (header, content, footer). Don't narrow to content-only containers.
+  return (
+    overlay.closest(
+      '.MuiModal-root, .MuiDialog-root, .MuiDrawer-root, [role="dialog"], [role="alertdialog"], [aria-modal="true"]',
+    ) || overlay
+  );
+}
+
+async function waitFor(predicate, timeoutMs = 2000, intervalMs = 150) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const result = predicate();
+    if (result) return result;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
+/**
+ * Waits for an overlay (modal/drawer) to become visible before proceeding.
+ * Only blocks when the step was recorded inside a modal (step.insideModal === true).
+ * Returns the overlay element once visible, or null after timeout.
+ * @param {Object} step - The step being executed
+ * @param {number} maxWaitMs - Maximum milliseconds to wait (default 2000)
+ * @returns {Promise<HTMLElement|null>}
+ */
+async function waitForOverlay(step, maxWaitMs = 2000) {
+  if (!step.insideModal) return findActiveOverlay(step);
+  const start = Date.now();
+  const overlay = await waitFor(() => {
+    const modal = findActiveOverlay(step);
+    return modal && isElementActuallyVisible(modal) ? modal : null;
+  }, maxWaitMs);
+  if (overlay) {
+    logExecution(`Modal detected after ${Date.now() - start}ms wait`, "info");
+
+    // Wait for CSS transition/animation to settle (Bootstrap modals fade in ~300ms)
+    try {
+      const style = getComputedStyle(overlay);
+      const transitionDur = parseFloat(style.transitionDuration || "0") * 1000;
+      const animationDur = parseFloat(style.animationDuration || "0") * 1000;
+      const settleDur = Math.max(transitionDur, animationDur);
+      if (settleDur > 0) {
+        await new Promise((r) => setTimeout(r, Math.min(settleDur + 50, 500)));
+        logExecution(
+          `Waited ${Math.round(settleDur + 50)}ms for modal transition to settle`,
+          "info",
+        );
+      }
+
+      // Also wait for opacity to reach near 1.0 (max 500ms extra)
+      const opacityReady = await waitFor(
+        () => {
+          const s = getComputedStyle(overlay);
+          return parseFloat(s.opacity || "1") > 0.9;
+        },
+        500,
+        100,
+      );
+      if (!opacityReady) {
+        logExecution(
+          "Modal opacity did not reach 1.0 — proceeding anyway",
+          "warning",
+        );
+      }
+    } catch (e) {
+      // getComputedStyle may fail on detached elements — proceed anyway
+    }
+
+    return overlay;
+  }
+  logExecution(
+    `Modal not detected after ${maxWaitMs}ms wait — proceeding without overlay scope`,
+    "warning",
+  );
+  return null;
+}
+
+/**
+ * Searches for an element within an overlay container by matching step description/text.
+ * Scoped search is much more reliable than full-page search for modal elements.
+ * @param {HTMLElement} overlay - The overlay container to search within
+ * @param {Object} step - The step to find an element for
+ * @returns {HTMLElement|null}
+ */
+function searchWithinOverlay(overlay, step) {
+  const searchText = (step.description || step.value || "")
+    .trim()
+    .toLowerCase();
+  if (!searchText || searchText.length < 2) return null;
+
+  // Build list of containers to search: start with the given overlay root,
+  // then escalate to the full overlay ancestor if different (catches footer buttons)
+  const searchRoots = [overlay];
+  const fullOverlay = overlay.closest(
+    '.modal, .MuiDialog-root, .MuiDrawer-root, .MuiModal-root, [role="dialog"], [role="alertdialog"], [aria-modal="true"]',
+  );
+  if (
+    fullOverlay &&
+    fullOverlay !== overlay &&
+    !searchRoots.includes(fullOverlay)
+  ) {
+    searchRoots.push(fullOverlay);
+  }
+
+  for (const root of searchRoots) {
+    const result = _searchOverlayRoot(root, searchText, step);
+    if (result) return result;
+  }
+
+  return null;
+}
+
+/**
+ * Internal helper: searches a single overlay root for interactive elements matching text.
+ */
+function _searchOverlayRoot(root, searchText, step) {
+  // 1. Search interactive elements by text content
+  const interactiveSelector =
+    'button, a, input, select, textarea, label, span, div[role="button"], input[type="submit"], input[type="button"], [role="checkbox"], [role="radio"], [role="option"], [role="menuitem"], [role="tab"], .checkboxLabel, .optionLabel, .labelText';
+  const candidates = root.querySelectorAll(interactiveSelector);
+
+  for (const el of candidates) {
+    if (!isElementVisible(el)) continue;
+
+    // Match by text content
+    const text = getVisibleText(el).replace(/\s+/g, " ").trim().toLowerCase();
+    if (text === searchText || text.includes(searchText)) {
+      console.log(
+        `[Modal Search] Found by text: '${text}' matches '${searchText}' (${el.tagName})`,
+      );
+      logExecution(`Modal-scoped match: '${text}' in ${el.tagName}`, "success");
+      return el;
+    }
+
+    // Match by aria-label
+    const ariaLabel = (el.getAttribute("aria-label") || "")
+      .trim()
+      .toLowerCase();
+    if (
+      ariaLabel &&
+      (ariaLabel === searchText || ariaLabel.includes(searchText))
+    ) {
+      console.log(
+        `[Modal Search] Found by aria-label: '${ariaLabel}' matches '${searchText}')`,
+      );
+      logExecution(
+        `Modal-scoped match by aria-label: '${ariaLabel}' in ${el.tagName}`,
+        "success",
+      );
+      return el;
+    }
+
+    // Match by placeholder
+    const placeholder = (el.getAttribute("placeholder") || "")
+      .trim()
+      .toLowerCase();
+    if (
+      placeholder &&
+      (placeholder === searchText || placeholder.includes(searchText))
+    ) {
+      console.log(
+        `[Modal Search] Found by placeholder: '${placeholder}' matches '${searchText}')`,
+      );
+      return el;
+    }
+
+    // Match by value attribute (for submit buttons like <input type="submit" value="Submit">)
+    const valueAttr = (el.getAttribute("value") || "").trim().toLowerCase();
+    if (
+      valueAttr &&
+      (el.type === "submit" || el.type === "button") &&
+      (valueAttr === searchText || valueAttr.includes(searchText))
+    ) {
+      console.log(
+        `[Modal Search] Found by value attr: '${valueAttr}' matches '${searchText}')`,
+      );
+      return el;
+    }
+  }
+
+  // 2. Search labels and their linked controls
+  const labels = root.querySelectorAll("label");
+  for (const label of labels) {
+    if (!isElementVisible(label)) continue;
+    const labelText = getVisibleText(label)
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (labelText === searchText || labelText.includes(searchText)) {
+      // If step is click, return the label's control (checkbox/radio) or the label itself
+      if (label.control && isElementVisible(label.control)) {
+        console.log(
+          `[Modal Search] Found label control for '${searchText}': ${label.control.tagName}`,
+        );
+        return label.control;
+      }
+      return label;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Fuzzy fallback search for elements.
  * @param {Object} step
  * @returns {HTMLElement|null}
  */
-function fuzzyFallbackSearch(step) {
+function fuzzyFallbackSearch(
+  step,
+  overlayRoot = getActiveOverlayRoot(step) || getSelectorRootHint(step),
+  requiredRoot = null,
+) {
   // --- AGGRESSIVE FUZZY FALLBACK (Manager Demo Mode) ---
   // If all specific locators fail, search for any clickable element with matching text
   const searchText = step.description || step.value || "";
@@ -1049,18 +1730,45 @@ function fuzzyFallbackSearch(step) {
     const allElements = document.querySelectorAll(
       "button, a, div[role='button'], input[type='submit'], span",
     );
+    const searchLower = searchText.replace(/\s+/g, " ").trim().toLowerCase();
+
+    // First pass: prefer elements inside overlay
     for (const el of allElements) {
+      if (overlayRoot && !overlayRoot.contains(el)) continue;
+      if (requiredRoot && !requiredRoot.contains(el)) continue;
       const elText = getVisibleText(el)
         .replace(/\s+/g, " ")
         .trim()
         .toLowerCase();
-      const searchLower = searchText.replace(/\s+/g, " ").trim().toLowerCase();
       if (
         (elText === searchLower || elText.includes(searchLower)) &&
         isElementVisible(el)
       ) {
         console.log(`Fuzzy match found: '${elText}' matches '${searchLower}'`);
         return el;
+      }
+    }
+
+    // Second pass (escape hatch): if overlay-scoped search found nothing, try globally
+    if (overlayRoot && !requiredRoot) {
+      for (const el of allElements) {
+        const elText = getVisibleText(el)
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+        if (
+          (elText === searchLower || elText.includes(searchLower)) &&
+          isElementVisible(el)
+        ) {
+          console.log(
+            `Fuzzy global fallback match: '${elText}' matches '${searchLower}'`,
+          );
+          logExecution(
+            `Fuzzy global fallback (outside overlay): '${elText}'`,
+            "warning",
+          );
+          return el;
+        }
       }
     }
   }
@@ -1072,7 +1780,20 @@ function fuzzyFallbackSearch(step) {
   if (selectors && selectors.css) {
     console.log(`Deep searching Shadows for: ${selectors.css}`);
     const shadowEl = deepQuerySelector(selectors.css);
-    if (shadowEl && isElementVisible(shadowEl)) return shadowEl;
+    if (
+      shadowEl &&
+      isElementVisible(shadowEl) &&
+      (!overlayRoot || overlayRoot.contains(shadowEl)) &&
+      (!requiredRoot || requiredRoot.contains(shadowEl))
+    ) {
+      return shadowEl;
+    } else if (shadowEl && isElementVisible(shadowEl)) {
+      logExecution(
+        `Fuzzy shadow fallback (outside overlay): ${shadowEl.tagName}`,
+        "warning",
+      );
+      if (!requiredRoot || requiredRoot.contains(shadowEl)) return shadowEl;
+    }
   }
 
   console.log(
@@ -1142,6 +1863,7 @@ function logExecution(text, level = "info") {
 }
 
 let currentlyExecutingIndex = -1;
+let _previousStepInsideModal = false;
 
 /**
  * Detects and logs nuances (differences in element state) between recording and playback.
@@ -1209,12 +1931,30 @@ async function executeSingleStep(step, index) {
   logExecution(`Step ${index + 1} starting: ${JSON.stringify(step)}`, "info");
 
   try {
+    // --- Modal Close Detection ---
+    // If previous step was inside a modal but this one is NOT,
+    // wait for the modal to fully close before proceeding
+    if (_previousStepInsideModal && !step.insideModal) {
+      logExecution(
+        `Step ${index + 1}: Previous step was inside modal, waiting for modal to close`,
+        "info",
+      );
+      await waitFor(() => !findActiveOverlay(), 3000, 200);
+      logExecution(`Modal closed — continuing with step ${index + 1}`, "info");
+    }
+    // Update tracking for next step
+    _previousStepInsideModal = !!step.insideModal;
+
     let element = null;
     const maxAttempts = 40; // Increased to 10 seconds total (40 * 250ms)
     const waitTime = 250;
 
     if (step.action !== "scroll") {
       for (let i = 0; i < maxAttempts; i++) {
+        // On first attempt, wait for modal if step was recorded inside one
+        if (i === 0 && step.insideModal) {
+          await waitForOverlay(step);
+        }
         element = locateElement(step);
         if (element && isElementVisible(element)) break;
         element = null;
@@ -1338,6 +2078,7 @@ async function executeSingleStep(step, index) {
     }
 
     if (step.action === "click") {
+      console.log("TRACE: starting click handler");
       const clickableParent = isDecorativeElement(element)
         ? getClickableAncestor(element)
         : null;
@@ -1345,16 +2086,22 @@ async function executeSingleStep(step, index) {
         element = clickableParent;
       }
 
+      console.log("TRACE: after getClickableAncestor");
+
       // SETTLE TIME: Give frameworks a moment to update DOM before interacting
       await new Promise((r) => setTimeout(r, 400));
+      console.log("TRACE: after 400ms settle time");
 
       element.scrollIntoView({
         behavior: "auto",
         block: "center",
         inline: "center",
       });
+      console.log("TRACE: after scrollIntoView");
       await new Promise((r) => setTimeout(r, 100));
+      console.log("TRACE: after 100ms post-scroll");
       highlightElement(element);
+      console.log("TRACE: after highlightElement");
 
       const { offsetX, offsetY } = step;
       const rect = element.getBoundingClientRect();
@@ -1374,6 +2121,7 @@ async function executeSingleStep(step, index) {
         buttons: 1,
       };
 
+      console.log("TRACE: before PointerEvents dispatch");
       // Dispatch full sequence including PointerEvents for modern frameworks (MUI, etc.)
       try {
         element.dispatchEvent(

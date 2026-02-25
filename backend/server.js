@@ -213,6 +213,21 @@ async function initDb() {
     console.warn("Could not add offset_y column:", err.message);
   }
 
+  // Ensure 'modal_context' column exists
+  try {
+    const [cols] = await pool.query(
+      "SHOW COLUMNS FROM commands LIKE 'modal_context'",
+    );
+    if (cols.length === 0) {
+      await pool.query(
+        "ALTER TABLE commands ADD COLUMN modal_context JSON AFTER offset_y",
+      );
+      console.log("Added 'modal_context' column to 'commands' table.");
+    }
+  } catch (err) {
+    console.warn("Could not add modal_context column:", err.message);
+  }
+
   // Ensure 'aria_snapshot_url' column exists in 'executions'
   try {
     const [cols] = await pool.query("SHOW COLUMNS FROM executions");
@@ -293,8 +308,8 @@ async function runMigrations() {
 
             await pool.query(
               `INSERT INTO commands 
-              (test_id, step_order, command, target, targets, value, description, url, timestamp) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (test_id, step_order, command, target, targets, value, description, url, timestamp, modal_context) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 newTestId,
                 step.step_order,
@@ -305,6 +320,7 @@ async function runMigrations() {
                 step.action,
                 step.url,
                 step.timestamp,
+                JSON.stringify(step.modalContext || null),
               ],
             );
           }
@@ -366,10 +382,24 @@ app.get("/api/tests/:id", async (req, res) => {
       "SELECT * FROM commands WHERE test_id = ? ORDER BY step_order ASC",
       [req.params.id],
     );
+    const safeParseJson = (val) => {
+      if (!val) return undefined;
+      return typeof val === "object"
+        ? val
+        : (() => {
+            try {
+              return JSON.parse(val);
+            } catch (e) {
+              return undefined;
+            }
+          })();
+    };
+
     const formattedSteps = commands.map((c) => ({
       ...c,
-      targets: c.targets ? JSON.parse(c.targets) : [],
-      selectors: c.selectors ? JSON.parse(c.selectors) : [],
+      targets: safeParseJson(c.targets) || [],
+      selectors: safeParseJson(c.selectors) || [],
+      modalContext: safeParseJson(c.modal_context),
     }));
     res.json({ ...test, steps: formattedSteps });
   } catch (err) {
@@ -405,12 +435,29 @@ app.post("/api/projects/:id/tests", async (req, res) => {
         JSON.stringify(s.selectors || []),
         s.offsetX || null,
         s.offsetY || null,
+        JSON.stringify(
+          s.modalContext
+            ? {
+                insideModal: s.modalContext.insideModal || s.insideModal,
+                modalSelector: s.modalContext.modalSelector || s.modalSelector,
+                modalText: s.modalContext.modalText || s.modalText,
+                modalIndex: s.modalContext.modalIndex || s.modalIndex,
+                modalRegion: s.modalContext.modalRegion || s.modalRegion,
+              }
+            : {
+                insideModal: s.insideModal,
+                modalSelector: s.modalSelector,
+                modalText: s.modalText,
+                modalIndex: s.modalIndex,
+                modalRegion: s.modalRegion,
+              },
+        ) || null,
       ]);
 
       if (values.length > 0) {
         await conn.query(
           `INSERT INTO commands 
-          (test_id, step_order, command, target, targets, value, description, url, timestamp, selectors, offset_x, offset_y) 
+          (test_id, step_order, command, target, targets, value, description, url, timestamp, selectors, offset_x, offset_y, modal_context) 
           VALUES ?`,
           [values],
         );
@@ -459,12 +506,29 @@ app.put("/api/tests/:id", async (req, res) => {
         JSON.stringify(s.selectors || []),
         s.offsetX || null,
         s.offsetY || null,
+        JSON.stringify(
+          s.modalContext
+            ? {
+                insideModal: s.modalContext.insideModal || s.insideModal,
+                modalSelector: s.modalContext.modalSelector || s.modalSelector,
+                modalText: s.modalContext.modalText || s.modalText,
+                modalIndex: s.modalContext.modalIndex || s.modalIndex,
+                modalRegion: s.modalContext.modalRegion || s.modalRegion,
+              }
+            : {
+                insideModal: s.insideModal,
+                modalSelector: s.modalSelector,
+                modalText: s.modalText,
+                modalIndex: s.modalIndex,
+                modalRegion: s.modalRegion,
+              },
+        ) || null,
       ]);
 
       if (values.length > 0) {
         await conn.query(
           `INSERT INTO commands 
-          (test_id, step_order, command, target, targets, value, description, url, timestamp, selectors, offset_x, offset_y) 
+          (test_id, step_order, command, target, targets, value, description, url, timestamp, selectors, offset_x, offset_y, modal_context) 
           VALUES ?`,
           [values],
         );
@@ -512,6 +576,13 @@ app.post("/api/test-cases", async (req, res) => {
   // Re-use logic from /api/projects/:id/tests
   // (In a real app we'd extract this to a service layer)
   const { name, steps } = req.body;
+
+  if (steps && steps.length > 0) {
+    console.log("=== RAW FIRST STEP PAYLOAD ===");
+    console.log(JSON.stringify(steps[0], null, 2));
+    console.log("===============================");
+  }
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -533,10 +604,17 @@ app.post("/api/test-cases", async (req, res) => {
         JSON.stringify(s.selectors || []),
         s.offsetX || null,
         s.offsetY || null,
+        JSON.stringify({
+          insideModal: s.insideModal,
+          modalSelector: s.modalSelector,
+          modalText: s.modalText,
+          modalIndex: s.modalIndex,
+          modalRegion: s.modalRegion,
+        }) || null,
       ]);
       if (values.length > 0)
         await conn.query(
-          `INSERT INTO commands (test_id, step_order, command, target, value, description, url, timestamp, selectors, offset_x, offset_y) VALUES ?`,
+          `INSERT INTO commands (test_id, step_order, command, target, value, description, url, timestamp, selectors, offset_x, offset_y, modal_context) VALUES ?`,
           [values],
         );
     }
@@ -561,13 +639,27 @@ app.get("/api/test-cases/:id", async (req, res) => {
       "SELECT * FROM commands WHERE test_id = ? ORDER BY step_order ASC",
       [req.params.id],
     );
+    const safeParseJson = (val) => {
+      if (!val) return undefined;
+      return typeof val === "object"
+        ? val
+        : (() => {
+            try {
+              return JSON.parse(val);
+            } catch (e) {
+              return undefined;
+            }
+          })();
+    };
+
     // Map back 'command' to 'action' and 'target' to 'selector' for old client
     const mappedSteps = commands.map((c) => ({
       ...c,
       action: c.command,
       selector: c.target,
-      targets: c.targets ? JSON.parse(c.targets) : [],
-      selectors: c.selectors ? JSON.parse(c.selectors) : [],
+      targets: safeParseJson(c.targets) || [],
+      selectors: safeParseJson(c.selectors) || [],
+      modalContext: safeParseJson(c.modal_context),
     }));
     res.json({ ...test, steps: mappedSteps });
   } catch (err) {

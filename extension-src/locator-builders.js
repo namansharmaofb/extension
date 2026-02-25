@@ -16,6 +16,34 @@ function getXPath(element) {
     )
       return "";
 
+    // If this element is the overlay root, stop recursion and return an anchored XPath
+    const overlay = getOverlayWrapper(element);
+    if (overlay && element === overlay) {
+      let anchor = element.tagName.toLowerCase();
+      const role = element.getAttribute("role");
+      if (role && !isDynamicId(role)) {
+        return `//${anchor}[@role='${role}']`;
+      }
+      const ariaModal = element.getAttribute("aria-modal");
+      if (ariaModal) {
+        return `//${anchor}[@aria-modal='${ariaModal}']`;
+      }
+      const testId = element.getAttribute("data-testid");
+      if (testId && !isDynamicId(testId)) {
+        return `//${anchor}[@data-testid='${testId}']`;
+      }
+      if (element.className && typeof element.className === "string") {
+        const classList = element.className
+          .split(" ")
+          .filter((c) => c && !isDynamicClass(c));
+        if (classList.length > 0) {
+          return `//${anchor}[contains(@class, '${classList[0]}')]`;
+        }
+      }
+      // Fallback for overlay
+      return `//${anchor}`;
+    }
+
     let ix = 0;
     const siblings = element.parentNode.childNodes;
     for (let i = 0; i < siblings.length; i++) {
@@ -181,6 +209,26 @@ function generateSelectors(element) {
     selectors.push([css]);
   }
 
+  // ── 9b. Modal-anchored CSS selector ────────────────────────────────
+  // When inside a modal/drawer, generate a selector anchored to its most stable identifier
+  // (ID, TestID, or Role) to provide a more robust path than just generic .modal.show
+  const overlayWrapper = getOverlayWrapper(element);
+  if (overlayWrapper && css) {
+    if (overlayWrapper.id && !isDynamic(overlayWrapper.id)) {
+      selectors.push([`#${CSS.escape(overlayWrapper.id)} ${css}`]);
+    } else {
+      const testId = overlayWrapper.getAttribute("data-testid");
+      if (testId && !isDynamic(testId)) {
+        selectors.push([`[data-testid="${testId}"] ${css}`]);
+      } else {
+        const role = overlayWrapper.getAttribute("role");
+        if (role && !isDynamic(role)) {
+          selectors.push([`[role="${role}"] ${css}`]);
+        }
+      }
+    }
+  }
+
   // ── 10. nth-of-type within parent (controlled positional fallback) ─
   const nthSelector = buildNthSelector(element);
   if (nthSelector) {
@@ -202,6 +250,48 @@ function generateSelectors(element) {
   // Build the result object
   const primary = selectors.length > 0 ? selectors[0][0] : css || xpath;
 
+  // Detect if this element was recorded inside an active Bootstrap/MUI modal
+  // so playback can use this context to scope its search correctly.
+  let modalContext = null;
+  const overlayEl = getOverlayWrapper(element);
+  if (overlayEl) {
+    if (overlayEl.id && !isDynamic(overlayEl.id)) {
+      modalContext = { selector: `#${CSS.escape(overlayEl.id)}`, type: "id" };
+    } else if (overlayEl.getAttribute("data-testid")) {
+      modalContext = {
+        selector: `[data-testid="${overlayEl.getAttribute("data-testid")}"]`,
+        type: "testid",
+      };
+    } else if (overlayEl.getAttribute("role")) {
+      modalContext = {
+        selector: `[role="${overlayEl.getAttribute("role")}"]`,
+        type: "role",
+      };
+    } else if (overlayEl.classList && overlayEl.classList.length > 0) {
+      const stableClass = Array.from(overlayEl.classList).find(
+        (c) => !isDynamicClass(c) && !isGenericOverlayClass(c),
+      );
+      if (stableClass)
+        modalContext = { selector: `.${stableClass}`, type: "class" };
+    }
+    if (modalContext) {
+      modalContext.tag = overlayEl.tagName.toLowerCase();
+      // Extract modal title for AI/fuzzy matching
+      const titleEl = overlayEl.querySelector(
+        ".modal-title, [class*='title' i], h1, h2, h3, h4, h5",
+      );
+      modalContext.modalText = titleEl ? titleEl.textContent.trim() : null;
+      // Determine modal index among all open modals for disambiguation
+      const openModals = [
+        ...document.querySelectorAll(
+          ".modal.show, .modal[style*='display: block'], .modal[style*='display:block'], .MuiDrawer-root, .MuiDialog-root, [role='dialog'], [aria-modal='true']",
+        ),
+      ].filter(isElementActuallyVisible);
+      openModals.sort((a, b) => getZIndex(b) - getZIndex(a));
+      modalContext.modalIndex = openModals.indexOf(overlayEl);
+    }
+  }
+
   return {
     selectors: selectors,
     selector: primary,
@@ -209,6 +299,7 @@ function generateSelectors(element) {
     css: css,
     xpath: xpath,
     id: element.id && !isDynamic(element.id) ? element.id : null,
+    modalContext: modalContext,
     attributes: {
       "data-testid": element.getAttribute("data-testid"),
       "data-cy": element.getAttribute("data-cy"),
@@ -469,15 +560,108 @@ function isDynamicClass(cls) {
   return isDynamic(cls);
 }
 
+/**
+ * Checks if an element is an active (visible/open) Bootstrap 4 modal.
+ * Bootstrap adds .show and sets display:block when open.
+ * @param {HTMLElement} el
+ * @returns {boolean}
+ */
+function isBootstrapModalOpen(el) {
+  if (!el || !el.classList.contains("modal")) return false;
+  // Bootstrap 4 adds .show class when open.
+  // Alternatively, display:block is set by Bootstrap JS.
+  const hasOpenIndicator =
+    el.classList.contains("show") ||
+    el.style.display === "block" ||
+    window.getComputedStyle(el).display === "block";
+  return hasOpenIndicator && isElementActuallyVisible(el);
+}
+
+function isGenericOverlayClass(cls) {
+  const generic = new Set([
+    "modal",
+    "show",
+    "fade",
+    "dialog",
+    "modal-dialog",
+    "modal-content",
+    "modal-body",
+    "modal-backdrop",
+  ]);
+  return generic.has(cls);
+}
+
+function getOverlayWrapper(el) {
+  if (!el || !el.closest) return null;
+
+  // Non-Bootstrap overlays — these are always relevant if they exist in DOM
+  const nonBootstrapSelectors = [
+    '[role="dialog"]',
+    '[role="alertdialog"]',
+    ".MuiDrawer-root",
+    ".MuiDialog-root",
+    ".MuiModal-root",
+    ".MuiPopover-root",
+    ".drawer",
+    '[aria-modal="true"]',
+    '[data-testid*="drawer"]',
+    '[data-testid*="modal"]',
+    '[data-testid*="dialog"]',
+  ];
+
+  // Check non-Bootstrap overlays first
+  const nonBootstrap = el.closest(nonBootstrapSelectors.join(", "));
+  if (nonBootstrap) return nonBootstrap;
+
+  // Bootstrap 4 modal — ONLY match if the modal is actually open
+  // .modal elements exist in DOM even when closed; we must check for .show
+  let current = el;
+  while (current && current !== document.body) {
+    if (current.classList && current.classList.contains("modal")) {
+      if (isBootstrapModalOpen(current)) return current;
+      // If we hit a closed .modal, stop — don't keep walking up
+      break;
+    }
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
 function buildCssPath(el) {
   const path = [];
+  const overlay = getOverlayWrapper(el);
 
-  while (el && el.nodeType === 1 && el !== document.body) {
+  while (
+    el &&
+    el.nodeType === 1 &&
+    el !== document.body &&
+    el.tagName.toLowerCase() !== "html"
+  ) {
+    if (overlay && el === overlay) {
+      let anchor = el.tagName.toLowerCase();
+      const role = el.getAttribute("role");
+      if (role && !isDynamicId(role)) {
+        anchor += `[role="${CSS.escape(role)}"]`;
+      } else if (el.className && typeof el.className === "string") {
+        const cls = el.className
+          .split(" ")
+          .filter((c) => !isDynamicClass(c))[0];
+        if (cls) anchor += "." + CSS.escape(cls);
+      }
+      path.unshift(anchor);
+      break;
+    }
+
     let selector = el.tagName.toLowerCase();
 
-    if (el.className) {
-      const cls = el.className.split(" ").filter(Boolean).slice(0, 2).join(".");
-      if (cls) selector += "." + cls;
+    if (el.className && typeof el.className === "string") {
+      const cls = el.className
+        .split(" ")
+        .filter((c) => !isDynamicClass(c))
+        .slice(0, 2)
+        .join(".");
+      if (cls) selector += "." + CSS.escape(cls);
     }
 
     const siblings = Array.from(el.parentNode.children).filter(
@@ -497,8 +681,29 @@ function buildCssPath(el) {
 
 function buildXPath(el) {
   let path = "";
+  const overlay = getOverlayWrapper(el);
 
   while (el && el.nodeType === 1) {
+    if (overlay && el === overlay) {
+      let anchor = el.tagName.toLowerCase();
+      const role = el.getAttribute("role");
+      if (role && !isDynamicId(role)) {
+        path = `//${anchor}[@role='${role}']` + path;
+      } else if (el.className && typeof el.className === "string") {
+        const firstClass = el.className
+          .split(" ")
+          .filter((c) => c && !isDynamicClass(c))[0];
+        if (firstClass) {
+          path = `//${anchor}[contains(@class, '${firstClass}')]` + path;
+        } else {
+          path = `//${anchor}` + path;
+        }
+      } else {
+        path = `//${anchor}` + path;
+      }
+      break;
+    }
+
     let index = 1;
     let sib = el.previousSibling;
 

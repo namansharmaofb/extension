@@ -183,6 +183,37 @@ function isElementVisible(element) {
 }
 
 /**
+ * Strict visibility check for overlay/modal containers.
+ * Unlike isElementVisible (which has radio/checkbox exceptions), this checks
+ * all visibility properties without exceptions — used for modal detection
+ * where we need certainty the container is truly visible.
+ * @param {HTMLElement} el
+ * @returns {boolean}
+ */
+function isElementActuallyVisible(el) {
+  if (!el) return false;
+  if (!el.isConnected) return false;
+  const style = window.getComputedStyle(el);
+  return (
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    style.opacity !== "0" &&
+    el.offsetParent !== null
+  );
+}
+
+/**
+ * Safely extracts z-index from an element.
+ * @param {HTMLElement} el
+ * @returns {number}
+ */
+function getZIndex(el) {
+  if (!el) return 0;
+  const z = window.getComputedStyle(el).zIndex;
+  return isNaN(z) ? 0 : Number(z);
+}
+
+/**
  * Temporarily highlights an element with a red outline.
  * @param {HTMLElement} element
  */

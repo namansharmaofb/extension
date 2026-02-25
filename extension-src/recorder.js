@@ -1,10 +1,112 @@
 // Logic for capturing user interactions and reporting them to the background
 
+function getModalTitle(modal) {
+  if (!modal) return null;
+  const titleEl = modal.querySelector(
+    ".modal-title, [class*='title' i], h1, h2, h3, h4, h5, [class*='header' i] h5",
+  );
+  if (titleEl && titleEl.textContent) return titleEl.textContent.trim();
+
+  const ariaLabel = modal.getAttribute("aria-label");
+  if (ariaLabel) return ariaLabel.trim();
+
+  const labelledBy = modal.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    const labelEl = document.getElementById(labelledBy);
+    if (labelEl && labelEl.textContent) return labelEl.textContent.trim();
+  }
+
+  return null;
+}
+
+function getActiveModalSelector(modal) {
+  if (!modal) return null;
+  if (modal.id && !isDynamicId(modal.id)) return `#${modal.id}`;
+
+  const testIdAttrs = ["data-testid", "data-test-id", "data-cy", "data-qa"];
+  for (const attr of testIdAttrs) {
+    const val = modal.getAttribute(attr);
+    if (val) return `[${attr}="${val}"]`;
+  }
+
+  const role = modal.getAttribute("role");
+  if (role) return `[role="${role}"]`;
+
+  return null;
+}
+
 /**
- * Finds the nearest interactive parent element.
+ * Finds the active Bootstrap 4 modal containing a given element (if any).
+ * Returns a stable selector for the modal plus enriched context (title, index)
+ * for better disambiguation during playback.
  * @param {HTMLElement} element
- * @returns {HTMLElement}
+ * @returns {{ insideModal: boolean, modalSelector: string|null, modalText: string|null, modalIndex: number }}
  */
+function getActiveModalContext(element) {
+  if (!element)
+    return {
+      insideModal: false,
+      modalSelector: null,
+      modalText: null,
+      modalIndex: -1,
+      modalRegion: null,
+    };
+
+  // Find all visible overlays first for global indexing
+  const openOverlays = [
+    ...document.querySelectorAll(
+      ".modal.show, .modal[style*='display: block'], .modal[style*='display:block'], .MuiDrawer-root, .MuiDialog-root, .MuiModal-root, [role='dialog'], [role='alertdialog'], [aria-modal='true']",
+    ),
+  ].filter(isElementActuallyVisible);
+
+  // Sort by z-index descending so index 0 is top-most
+  openOverlays.sort((a, b) => getZIndex(b) - getZIndex(a));
+
+  // Walk up the DOM to find if the element is inside one of these
+  let current = element;
+  while (current && current !== document.body) {
+    const overlayIndex = openOverlays.indexOf(current);
+    if (overlayIndex !== -1) {
+      const overlayEl = current;
+      const selector = getActiveModalSelector(overlayEl);
+      const modalText = getModalTitle(overlayEl);
+
+      // Determine which region of the modal the element is in
+      let modalRegion = "body"; // default
+      if (
+        element.closest(
+          '.modal-footer, .MuiDialogActions-root, [class*="footer" i]',
+        )
+      ) {
+        modalRegion = "footer";
+      } else if (
+        element.closest(
+          '.modal-header, .MuiDialogTitle-root, [class*="header" i]',
+        )
+      ) {
+        modalRegion = "header";
+      }
+
+      return {
+        insideModal: true,
+        modalSelector: selector,
+        modalText,
+        modalIndex: overlayIndex,
+        modalRegion,
+      };
+    }
+    current = current.parentElement;
+  }
+
+  return {
+    insideModal: false,
+    modalSelector: null,
+    modalText: null,
+    modalIndex: -1,
+    modalRegion: null,
+  };
+}
+
 function getInteractiveParent(element) {
   if (!element || element === document.body) return element;
 
@@ -107,6 +209,7 @@ function handleClick(event) {
       nuanceMetadata: nuanceMetadata,
       offsetX: offsetX,
       offsetY: offsetY,
+      ...getActiveModalContext(target), // Tag with modal context if inside a modal
     };
 
     chrome.runtime.sendMessage({ type: "RECORD_STEP", step });
@@ -174,6 +277,7 @@ function recordInputStep(target) {
       description: descriptor,
       url: window.location.href,
       nuanceMetadata: nuanceMetadata,
+      ...getActiveModalContext(target), // Tag with modal context if inside a modal
     };
 
     chrome.runtime.sendMessage({ type: "RECORD_STEP", step });

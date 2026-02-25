@@ -1077,12 +1077,48 @@ async function executeTestCase(browser, page, testCaseId) {
 
     // Fast-fail if we stall on the same step for too long
     if (lastStepAt && Date.now() - lastStepAt > stepStallMs) {
-      const stallMessage = `Step ${typeof lastStepIndex === "number" ? lastStepIndex + 1 : "?"} stalled for ${Math.round(stepStallMs / 1000)}s: ${lastStepLine || "No step details"}`;
+      // Check if a modal is visible on the page (runner-side awareness)
+      let modalInfo = "";
+      try {
+        modalInfo = await page.evaluate(() => {
+          const modals = document.querySelectorAll(
+            '.modal.show, [role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"]',
+          );
+          const visible = Array.from(modals).filter((m) => {
+            const style = getComputedStyle(m);
+            return (
+              style.display !== "none" &&
+              style.visibility !== "hidden" &&
+              parseFloat(style.opacity || "1") > 0
+            );
+          });
+          if (visible.length === 0) return "";
+          const titles = visible.map((m) => {
+            const titleEl = m.querySelector(
+              ".modal-title, [class*='title' i], h1, h2, h3, h4, h5",
+            );
+            return titleEl ? titleEl.textContent.trim() : "(untitled modal)";
+          });
+          return ` [${visible.length} modal(s) open: ${titles.join(", ")}]`;
+        });
+      } catch (e) {
+        modalInfo = "";
+      }
+
+      const stallMessage = `Step ${typeof lastStepIndex === "number" ? lastStepIndex + 1 : "?"} stalled for ${Math.round(stepStallMs / 1000)}s: ${lastStepLine || "No step details"}${modalInfo}`;
       let ariaSnapshotPath = null;
       const focusStep =
         typeof lastStepIndex === "number"
           ? testCase.steps?.[lastStepIndex]
           : null;
+
+      // If a modal step stalled, add modal context to error
+      if (focusStep?.insideModal && modalInfo) {
+        console.log(
+          `${YELLOW}[Stall]${RESET} Step was recorded inside modal${modalInfo}`,
+        );
+      }
+
       try {
         await captureVisualScreenshot(page, "stall", testCaseId);
         ariaSnapshotPath = await captureAriaSnapshot(
