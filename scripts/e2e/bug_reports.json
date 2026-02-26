@@ -540,5 +540,75 @@
     "description": "Step 79 stalled for 30s: Typing \"Per\" into combobox to trigger search",
     "ariaSnapshot": null,
     "timestamp": "2026-02-23T12:32:09.030Z"
+  },
+  {
+    "id": "BUG-1772080177953",
+    "title": "Failure in dsakflsa",
+    "description": "Element not found for step 26: Element not found or not visible for step:26 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_249_1772080177835.json",
+    "timestamp": "2026-02-26T04:29:37.953Z"
+  },
+  {
+    "id": "BUG-1772081349508",
+    "title": "Failure in sadfdsadbfmhb",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_252_1772081349354.json",
+    "timestamp": "2026-02-26T04:49:09.508Z"
+  },
+  {
+    "id": "BUG-1772095044578",
+    "title": "Failure in sadfdsadbfmhb",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_252_1772095044428.json",
+    "timestamp": "2026-02-26T08:37:24.578Z"
+  },
+  {
+    "id": "BUG-1772096015627",
+    "title": "Failure in sadfdsadbfmhb",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_252_1772096015520.json",
+    "timestamp": "2026-02-26T08:53:35.627Z"
+  },
+  {
+    "id": "BUG-1772096967274",
+    "title": "Failure in sadfhjsd",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_254_1772096967133.json",
+    "timestamp": "2026-02-26T09:09:27.274Z"
+  },
+  {
+    "id": "BUG-1772100210773",
+    "title": "Failure in arfdsf",
+    "description": "Element not found for step 24: Element not found or not visible for step:24 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_256_1772100210707.json",
+    "timestamp": "2026-02-26T10:03:30.773Z"
+  },
+  {
+    "id": "BUG-1772100302378",
+    "title": "Failure in arfdsf",
+    "description": "Element not found for step 24: Element not found or not visible for step:24 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_256_1772100302255.json",
+    "timestamp": "2026-02-26T10:05:02.378Z"
+  },
+  {
+    "id": "BUG-1772100557199",
+    "title": "Failure in wqrwqr",
+    "description": "Element not found for step 13: Element not found or not visible for step:13 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_257_1772100557076.json",
+    "timestamp": "2026-02-26T10:09:17.199Z"
+  },
+  {
+    "id": "BUG-1772100617960",
+    "title": "Failure in wqrwqr",
+    "description": "Element not found for step 13: Element not found or not visible for step:13 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_257_1772100617823.json",
+    "timestamp": "2026-02-26T10:10:17.960Z"
+  },
+  {
+    "id": "BUG-1772101767773",
+    "title": "Failure in wqrwqr",
+    "description": "Element not found for step 13: Element not found or not visible for step:13 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_257_1772101767647.json",
+    "timestamp": "2026-02-26T10:29:27.773Z"
   }
 ]

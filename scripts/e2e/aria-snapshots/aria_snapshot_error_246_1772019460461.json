@@ -1,0 +1,16 @@
+{
+  "role": "button",
+  "name": "chevron_right",
+  "children": [
+    {
+      "role": "generic",
+      "name": "",
+      "children": [
+        {
+          "role": "StaticText",
+          "name": "chevron_right"
+        }
+      ]
+    }
+  ]
+}

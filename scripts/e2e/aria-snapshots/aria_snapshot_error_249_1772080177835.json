@@ -1,0 +1,141 @@
+{
+  "role": "RootWebArea",
+  "name": "Create Material PO | SMEAssist | Leading automation tool for SMEs",
+  "children": [
+    {
+      "role": "none",
+      "children": [
+        {
+          "role": "generic",
+          "name": "",
+          "children": [
+            {
+              "role": "generic",
+              "name": "Associated PAN: AAALS2726B 13 Maximum allowed characters for series is 16 Series Expected Counter 0005 Suffix Submit",
+              "focused": true,
+              "children": [
+                {
+                  "role": "none",
+                  "children": [
+                    {
+                      "role": "paragraph",
+                      "name": "",
+                      "children": [
+                        {
+                          "role": "StaticText",
+                          "name": "Associated "
+                        },
+                        {
+                          "role": "StaticText",
+                          "name": "PAN"
+                        },
+                        {
+                          "role": "StaticText",
+                          "name": ": "
+                        },
+                        {
+                          "role": "StaticText",
+                          "name": "AAALS2726B"
+                        }
+                      ]
+                    },
+                    {
+                      "role": "paragraph",
+                      "name": "",
+                      "children": [
+                        {
+                          "role": "StaticText",
+                          "name": "13"
+                        },
+                        {
+                          "role": "generic",
+                          "name": "Maximum allowed characters for series is 16",
+                          "children": [
+                            {
+                              "role": "StaticText",
+                              "name": "info"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "role": "none",
+                  "children": [
+                    {
+                      "role": "none",
+                      "children": [
+                        {
+                          "role": "LabelText",
+                          "name": "",
+                          "children": [
+                            {
+                              "role": "StaticText",
+                              "name": "Series"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "role": "none",
+                      "children": [
+                        {
+                          "role": "LabelText",
+                          "name": "",
+                          "children": [
+                            {
+                              "role": "StaticText",
+                              "name": "Expected Counter"
+                            }
+                          ]
+                        },
+                        {
+                          "role": "none",
+                          "children": [
+                            {
+                              "role": "textbox",
+                              "name": "Enter counter value",
+                              "value": "0005"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "role": "none",
+                      "children": [
+                        {
+                          "role": "LabelText",
+                          "name": "",
+                          "children": [
+                            {
+                              "role": "StaticText",
+                              "name": "Suffix"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "role": "button",
+                  "name": "Submit",
+                  "children": [
+                    {
+                      "role": "StaticText",
+                      "name": "Submit"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
