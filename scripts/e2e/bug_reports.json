@@ -610,5 +610,82 @@
     "description": "Element not found for step 13: Element not found or not visible for step:13 (click)",
     "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_257_1772101767647.json",
     "timestamp": "2026-02-26T10:29:27.773Z"
+  },
+  {
+    "id": "BUG-1772106122932",
+    "title": "Failure in dgsahsg",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_258_1772106122780.json",
+    "timestamp": "2026-02-26T11:42:02.932Z"
+  },
+  {
+    "id": "BUG-1772166838328",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 44: Element not found or not visible for step:44 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772166838252.json",
+    "timestamp": "2026-02-27T04:33:58.328Z"
+  },
+  {
+    "id": "BUG-1772167095269",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772167095171.json",
+    "timestamp": "2026-02-27T04:38:15.269Z"
+  },
+  {
+    "id": "BUG-1772167389472",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772167389386.json",
+    "timestamp": "2026-02-27T04:43:09.472Z"
+  },
+  {
+    "id": "BUG-1772167537185",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772167537095.json",
+    "timestamp": "2026-02-27T04:45:37.185Z"
+  },
+  {
+    "id": "BUG-1772167658102",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 25: Element not found or not visible for step:25 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772167658016.json",
+    "timestamp": "2026-02-27T04:47:38.102Z"
+  },
+  {
+    "id": "BUG-1772168180032",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 44: Element not found or not visible for step:44 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772168179957.json",
+    "timestamp": "2026-02-27T04:56:20.032Z"
+  },
+  {
+    "id": "BUG-1772168345546",
+    "title": "Failure in fdsfsdf",
+    "description": "target is not defined",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772168345453.json",
+    "timestamp": "2026-02-27T04:59:05.546Z"
+  },
+  {
+    "id": "BUG-1772168513364",
+    "title": "Failure in fdsfsdf",
+    "description": "Element not found for step 46: Element not found or not visible for step:46 (input)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_259_1772168513291.json",
+    "timestamp": "2026-02-27T05:01:53.364Z"
+  },
+  {
+    "id": "BUG-1772169062436",
+    "title": "Failure in xchjdakg",
+    "description": "Element not found for step 51: Element not found or not visible for step:51 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_261_1772169062333.json",
+    "timestamp": "2026-02-27T05:11:02.436Z"
+  },
+  {
+    "id": "BUG-1772169352201",
+    "title": "Failure in xchjdakg",
+    "description": "Step 56 stalled for 30s: Click executed on content_copy at (1709.484375, 540.5)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-02-27T05:15:52.201Z"
   }
 ]

@@ -25,6 +25,96 @@ function extractAriaName(ariaText) {
 }
 
 /**
+ * Checks if an element is inside an overlay container (modal, popover, dropdown, drawer).
+ * @param {HTMLElement} el
+ * @returns {boolean}
+ */
+function isInsideOverlay(el) {
+  let current = el ? el.parentElement : null;
+  let depth = 0;
+  while (current && current !== document.body && depth < 30) {
+    const role = (current.getAttribute("role") || "").toLowerCase();
+    if (
+      [
+        "dialog",
+        "alertdialog",
+        "menu",
+        "listbox",
+        "tooltip",
+        "tree",
+        "presentation",
+      ].includes(role)
+    )
+      return true;
+    if (current.tagName === "DIALOG") return true;
+    const cls = current.className || "";
+    if (
+      typeof cls === "string" &&
+      (/\b(modal|popover|dropdown-menu|drawer|popup|overlay)\b/i.test(cls) ||
+        /\b(MuiModal|MuiPopover|MuiDrawer|MuiDialog|MuiMenu-paper|MuiAutocomplete-popper)\b/i.test(
+          cls,
+        ) ||
+        /\b(ant-modal|ant-popover|ant-dropdown|ant-drawer|ant-select-dropdown)\b/i.test(
+          cls,
+        ) ||
+        /\b(modal-dialog|modal-content)\b/i.test(cls) ||
+        /\b(portal|react-select__menu|slds-modal|slds-dropdown|chakra-modal|chakra-popover)\b/i.test(
+          cls,
+        ))
+    )
+      return true;
+    if (
+      current.hasAttribute("data-popper-placement") ||
+      current.hasAttribute("data-radix-popper-content-wrapper") ||
+      current.hasAttribute("data-radix-dialog-content") ||
+      current.hasAttribute("data-floating-ui-portal")
+    )
+      return true;
+    const style = window.getComputedStyle(current);
+    if (
+      (style.position === "fixed" || style.position === "absolute") &&
+      parseInt(style.zIndex, 10) >= 100
+    ) {
+      const rect = current.getBoundingClientRect();
+      if (rect.width > 80 && rect.height > 40) return true;
+    }
+    current = current.parentElement;
+    depth++;
+  }
+  return false;
+}
+
+/**
+ * When multiple visible elements match a selector, prefer the one inside
+ * the topmost overlay (modal, popover, dropdown, drawer).
+ * @param {Array<HTMLElement>} visibleElements
+ * @returns {HTMLElement|null}
+ */
+function preferOverlayElement(visibleElements) {
+  if (!visibleElements || visibleElements.length < 2) return null;
+  const inOverlay = visibleElements.filter(isInsideOverlay);
+  if (inOverlay.length === 1) return inOverlay[0];
+  if (inOverlay.length > 1) {
+    let best = null;
+    let bestZ = -1;
+    for (const el of inOverlay) {
+      let current = el.parentElement;
+      while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        const z = parseInt(style.zIndex, 10);
+        if (!isNaN(z) && z > bestZ) {
+          bestZ = z;
+          best = el;
+        }
+        current = current.parentElement;
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+/**
  * Checks if an element matches a given ARIA role.
  * Considers both explicit role attribute and implicit roles from HTML tags.
  * @param {HTMLElement} element
@@ -224,14 +314,16 @@ function isStepTargetingOption(step) {
   // But they can also be checkboxes. We check for common option prefixes or types.
   const target = step.selector || step.target || "";
   if (target.startsWith("aria/")) {
-    const label = target.substring(5);
+    const label = extractAriaName(target.slice(5));
     // Common date patterns
     if (label.startsWith("Choose ") && label.includes("202")) return true;
     // GSTIN or SKU patterns are often options
     if (
       label.includes("GSTIN:") ||
       label.includes("SKU:") ||
-      label.includes("Plant:")
+      label.includes("Plant:") ||
+      label.includes(" - ") ||
+      (label.length > 0 && label.length < 40 && !label.includes("/"))
     )
       return true;
   }
@@ -244,10 +336,14 @@ function isStepTargetingOption(step) {
  */
 function isStepTargetingDate(step) {
   const target = step.selector || step.target || "";
-  const desc = step.description || "";
+  const desc = (step.description || "").toLowerCase();
+  const isGridDay = target.includes("gridcell") && /^\d+$/.test(desc.trim());
   return (
     target.includes("datepicker__day") ||
-    (desc.startsWith("Choose ") && desc.includes("202"))
+    (desc.startsWith("choose ") && desc.includes("202")) ||
+    desc.includes("date") ||
+    desc.includes("calendar") ||
+    isGridDay
   );
 }
 
@@ -316,6 +412,46 @@ function locateElementWithSelectorArray(step) {
 
       // ARIA Selector (format: "aria/Name" or "aria/role[Name]")
       if (selector.startsWith("aria/")) {
+        // Handle nested selectors like "aria/Dialog[Settings] >> aria/button[Save]"
+        if (selector.includes(" >> ")) {
+          const parts = selector.split(" >> ");
+          let context = document;
+          let el = null;
+
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const { name: ariaText, role: ariaRole } = parseAriaSelector(
+              part.startsWith("aria/") ? part.slice(5) : part,
+            );
+
+            const results = findAllByAriaLabel(ariaText, context);
+            const visibleResults = results.filter(isElementVisible);
+
+            if (ariaRole && visibleResults.length > 0) {
+              const roleFiltered = visibleResults.filter((e) =>
+                elementMatchesRole(e, ariaRole),
+              );
+              if (roleFiltered.length > 0) {
+                el = roleFiltered[0]; // Take first match for intermediate parts
+              } else {
+                el = visibleResults[0];
+              }
+            } else if (visibleResults.length > 0) {
+              el = visibleResults[0];
+            } else {
+              el = null;
+              break;
+            }
+            context = el;
+          }
+
+          if (el) {
+            logSelectorSuccess(selector, el);
+            return el;
+          }
+          continue;
+        }
+
         const { name: ariaText, role: ariaRole } = parseAriaSelector(
           selector.slice(5),
         );
@@ -356,10 +492,25 @@ function locateElementWithSelectorArray(step) {
         const visibleElements = elements.filter(isElementVisible);
 
         if (expectedText && expectedText.length > 2) {
-          el = visibleElements.find((e) => {
+          const textMatches = visibleElements.filter((e) => {
             const text = getVisibleText(e).toLowerCase().trim();
             return text === expectedText || text.includes(expectedText);
           });
+          if (textMatches.length === 1) {
+            el = textMatches[0];
+          } else if (textMatches.length > 1) {
+            // Multiple elements with same text — try overlay disambiguation
+            const overlayEl = preferOverlayElement(textMatches);
+            if (overlayEl) {
+              logExecution(
+                `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", resolved to overlay element`,
+                "info",
+              );
+              el = overlayEl;
+            } else {
+              el = textMatches[0]; // Fallback to first match
+            }
+          }
         }
 
         // If we have exactly 1 visible match, use it
@@ -369,11 +520,21 @@ function locateElementWithSelectorArray(step) {
         // If many visible matches and text didn't disambiguate, skip to let
         // more specific selectors (XPath with ID, CSS) win
         if (!el && visibleElements.length > 1) {
-          logExecution(
-            `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
-            "info",
-          );
-          continue;
+          // Try overlay disambiguation: prefer element inside topmost modal/popover/dropdown
+          const overlayEl = preferOverlayElement(visibleElements);
+          if (overlayEl) {
+            logExecution(
+              `Strategy ${selector} found ${visibleElements.length} visible elements, resolved to overlay element`,
+              "info",
+            );
+            el = overlayEl;
+          } else {
+            logExecution(
+              `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
+              "info",
+            );
+            continue;
+          }
         }
 
         if (el) {
@@ -408,11 +569,21 @@ function locateElementWithSelectorArray(step) {
         }
         // If ambiguous (multiple visible matches), skip to more specific selectors
         if (!el && visibleElements.length > 1) {
-          logExecution(
-            `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
-            "info",
-          );
-          continue;
+          // Try overlay disambiguation: prefer element inside topmost modal/popover/dropdown
+          const overlayEl = preferOverlayElement(visibleElements);
+          if (overlayEl) {
+            logExecution(
+              `Strategy ${selector} found ${visibleElements.length} visible elements, resolved to overlay element`,
+              "info",
+            );
+            el = overlayEl;
+          } else {
+            logExecution(
+              `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
+              "info",
+            );
+            continue;
+          }
         }
 
         if (el) {
@@ -454,11 +625,45 @@ function locateElementWithSelectorArray(step) {
           if (textMatches.length === 1) {
             el = textMatches[0];
           } else if (textMatches.length > 1) {
-            logExecution(
-              `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", skipping ambiguous match`,
-              "info",
-            );
-            continue;
+            // Resolve ambiguity: prefer interactive elements over generic ones
+            const interactiveElements = textMatches.filter((e) => {
+              const role = e.getAttribute("role");
+              const isInteractiveRole = [
+                "button",
+                "link",
+                "checkbox",
+                "menuitem",
+                "option",
+                "radio",
+                "switch",
+                "tab",
+                "textbox",
+                "combobox",
+                "listbox",
+                "searchbox",
+              ].includes(role);
+              const isInteractiveTag = [
+                "BUTTON",
+                "INPUT",
+                "SELECT",
+                "A",
+                "TEXTAREA",
+              ].includes(e.tagName);
+              return isInteractiveRole || isInteractiveTag;
+            });
+            if (interactiveElements.length === 1) {
+              logExecution(
+                `Strategy ${selector} matched ${textMatches.length} elements, preferring interactive element/role match`,
+                "info",
+              );
+              el = interactiveElements[0];
+            } else {
+              logExecution(
+                `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", skipping ambiguous match`,
+                "info",
+              );
+              continue;
+            }
           } else if (
             isSpecificSelector(selector) &&
             visibleMatches.length === 1 &&
@@ -482,11 +687,21 @@ function locateElementWithSelectorArray(step) {
           if (visibleList.length === 1) {
             el = visibleList[0];
           } else if (visibleList.length > 1) {
-            logExecution(
-              `Strategy ${selector} matched ${visibleList.length} visible elements, skipping ambiguous selector`,
-              "info",
-            );
-            continue; // Force fallback to next selector (e.g. XPath)
+            // Try overlay disambiguation: prefer element inside topmost modal/popover/dropdown
+            const overlayEl = preferOverlayElement(visibleList);
+            if (overlayEl) {
+              logExecution(
+                `Strategy ${selector} matched ${visibleList.length} visible elements, resolved to overlay element`,
+                "info",
+              );
+              el = overlayEl;
+            } else {
+              logExecution(
+                `Strategy ${selector} matched ${visibleList.length} visible elements, skipping ambiguous selector`,
+                "info",
+              );
+              continue; // Force fallback to next selector (e.g. XPath)
+            }
           }
         }
 
@@ -524,13 +739,13 @@ function locateElementWithSelectorArray(step) {
   // --- DYNAMIC COMBOBOX/DATE FALLBACK ---
   if (isStepTargetingOption(step) || isStepTargetingDate(step)) {
     const activeContainer = document.querySelector(
-      '[role="listbox"]:not([style*="display: none"]), .slds-dropdown:not([style*="display: none"]), .selectV2-portal:not([style*="display: none"]), .react-datepicker:not([style*="display: none"]), .absolute-positioned:not([style*="display: none"])',
+      '[role="listbox"]:not([style*="display: none"]), .slds-dropdown:not([style*="display: none"]), .selectV2-portal:not([style*="display: none"]), .react-datepicker:not([style*="display: none"]), .absolute-positioned:not([style*="display: none"]), .MuiPopover-root:not([style*="display: none"]), .MuiPopper-root:not([style*="display: none"]), .MuiDialog-root:not([style*="display: none"])',
     );
 
     if (activeContainer) {
       const anyVisibleOption = Array.from(
         activeContainer.querySelectorAll(
-          '[role="option"], li.slds-listbox__item, .react-datepicker__day:not(.react-datepicker__day--disabled):not(.react-datepicker__day--outside-month)',
+          '[role="option"], [role="gridcell"], li.slds-listbox__item, .react-datepicker__day:not(.react-datepicker__day--disabled):not(.react-datepicker__day--outside-month), .MuiPickersDay-root:not(.Mui-disabled), .MuiMenuItem-root',
         ),
       ).find(isElementVisible);
 
@@ -550,14 +765,15 @@ function locateElementWithSelectorArray(step) {
 /**
  * Finds all elements by ARIA label (accessible name).
  * @param {string} ariaText
+ * @param {Element|Document} root - Scopes the search to this element
  * @returns {Array<HTMLElement>}
  */
-function findAllByAriaLabel(ariaText) {
+function findAllByAriaLabel(ariaText, root = document) {
   if (!ariaText) return [];
   const normalizedSearch = ariaText.replace(/\s+/g, " ").trim().toLowerCase();
   const matches = [];
 
-  const allElements = document.querySelectorAll("*");
+  const allElements = root.querySelectorAll("*");
   for (const el of allElements) {
     let matched = false;
 
@@ -897,13 +1113,13 @@ function locateElementLegacy(step) {
   // --- DYNAMIC COMBOBOX/DATE FALLBACK ---
   if (isStepTargetingOption(step) || isStepTargetingDate(step)) {
     const activeContainer = document.querySelector(
-      '[role="listbox"]:not([style*="display: none"]), .slds-dropdown:not([style*="display: none"]), .selectV2-portal:not([style*="display: none"]), .react-datepicker:not([style*="display: none"]), .absolute-positioned:not([style*="display: none"])',
+      '[role="listbox"]:not([style*="display: none"]), .slds-dropdown:not([style*="display: none"]), .selectV2-portal:not([style*="display: none"]), .react-datepicker:not([style*="display: none"]), .absolute-positioned:not([style*="display: none"]), .MuiPopover-root:not([style*="display: none"]), .MuiPopper-root:not([style*="display: none"]), .MuiDialog-root:not([style*="display: none"])',
     );
 
     if (activeContainer) {
       const anyVisibleOption = Array.from(
         activeContainer.querySelectorAll(
-          '[role="option"], li.slds-listbox__item, .react-datepicker__day:not(.react-datepicker__day--disabled):not(.react-datepicker__day--outside-month)',
+          '[role="option"], [role="gridcell"], li.slds-listbox__item, .react-datepicker__day:not(.react-datepicker__day--disabled):not(.react-datepicker__day--outside-month), .MuiPickersDay-root:not(.Mui-disabled), .MuiMenuItem-root',
         ),
       ).find(isElementVisible);
 
