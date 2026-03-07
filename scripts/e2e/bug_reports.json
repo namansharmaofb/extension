@@ -778,5 +778,40 @@
     "description": "Element not found for step 157: Element not found or not visible for step:157 (click)",
     "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_274_1772692737178.json",
     "timestamp": "2026-03-05T06:38:57.267Z"
+  },
+  {
+    "id": "BUG-1772877301694",
+    "title": "Failure in fdasfsa",
+    "description": "Step ? stalled for 30s: No step details",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_stall_321_1772877301571.json",
+    "timestamp": "2026-03-07T09:55:01.694Z"
+  },
+  {
+    "id": "BUG-1772877352548",
+    "title": "Failure in fdasfsa",
+    "description": "Step ? stalled for 30s: No step details",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_stall_321_1772877352421.json",
+    "timestamp": "2026-03-07T09:55:52.548Z"
+  },
+  {
+    "id": "BUG-1772877797359",
+    "title": "Failure in fdasfsa",
+    "description": "Step ? stalled for 30s: No step details",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-07T10:03:17.359Z"
+  },
+  {
+    "id": "BUG-1772878144633",
+    "title": "Failure in fdasfsa",
+    "description": "Element not found for step 102: Element not found or not visible for step:102 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_321_1772878144539.json",
+    "timestamp": "2026-03-07T10:09:04.633Z"
+  },
+  {
+    "id": "BUG-1772887704328",
+    "title": "Failure in Test 321",
+    "description": "Step ? stalled for 30s: No step details",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_stall_321_1772887704269.json",
+    "timestamp": "2026-03-07T12:48:24.328Z"
   }
 ]
