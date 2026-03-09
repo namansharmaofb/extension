@@ -841,5 +841,89 @@
     "description": "Step 37 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
     "ariaSnapshot": null,
     "timestamp": "2026-03-09T04:44:18.490Z"
+  },
+  {
+    "id": "BUG-1773049588165",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 89: Element not found or not visible for step:89 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773049587957.json",
+    "timestamp": "2026-03-09T09:46:28.165Z"
+  },
+  {
+    "id": "BUG-1773050277848",
+    "title": "Failure in new",
+    "description": "Element not found for step 29: Element not found or not visible for step:29 (input)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-09T09:57:57.848Z"
+  },
+  {
+    "id": "BUG-1773051587517",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 89: Element not found or not visible for step:89 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773051587302.json",
+    "timestamp": "2026-03-09T10:19:47.517Z"
+  },
+  {
+    "id": "BUG-1773052236181",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 89: Element not found or not visible for step:89 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773052235987.json",
+    "timestamp": "2026-03-09T10:30:36.181Z"
+  },
+  {
+    "id": "BUG-1773054565799",
+    "title": "Failure in dgfds",
+    "description": "The browser is shutting down.",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-09T11:09:25.799Z"
+  },
+  {
+    "id": "BUG-1773055687579",
+    "title": "Failure in Test 327",
+    "description": "Step 87 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-09T11:28:07.579Z"
+  },
+  {
+    "id": "BUG-1773056288290",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 131: Element not found or not visible for step:131 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773056288234.json",
+    "timestamp": "2026-03-09T11:38:08.290Z"
+  },
+  {
+    "id": "BUG-1773056654674",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 34: Element not found or not visible for step:34 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773056654609.json",
+    "timestamp": "2026-03-09T11:44:14.674Z"
+  },
+  {
+    "id": "BUG-1773057161434",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 131: Element not found or not visible for step:131 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773057161374.json",
+    "timestamp": "2026-03-09T11:52:41.434Z"
+  },
+  {
+    "id": "BUG-1773057415699",
+    "title": "Failure in Test 327",
+    "description": "Step 42 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-09T11:56:55.699Z"
+  },
+  {
+    "id": "BUG-1773057728956",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 131: Element not found or not visible for step:131 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773057728895.json",
+    "timestamp": "2026-03-09T12:02:08.956Z"
+  },
+  {
+    "id": "BUG-1773058151606",
+    "title": "Failure in dgfds",
+    "description": "Element not found for step 131: Element not found or not visible for step:131 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_327_1773058151496.json",
+    "timestamp": "2026-03-09T12:09:11.606Z"
   }
 ]

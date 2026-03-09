@@ -1,4 +1,5 @@
 // Engine for finding elements and executing commands during flow playback
+let lastInteractedElement = null;
 
 /**
  * Extracts the accessible name and optional role from an ARIA selector string.
@@ -1517,7 +1518,7 @@ async function executeSingleStep(step, index) {
   try {
     let element = null;
     const maxAttempts = 40; // Increased to 10 seconds total (40 * 250ms)
-    const waitTime = 250;
+    const waitTime = 300;
 
     if (step.action !== "scroll") {
       for (let i = 0; i < maxAttempts; i++) {
@@ -1534,13 +1535,25 @@ async function executeSingleStep(step, index) {
         ) {
           const comboboxInputs = Array.from(
             document.querySelectorAll(
-              'input[role="combobox"], input.react-datepicker-ignore-onclickoutside, .react-datepicker__input-container input',
+              'input[role="combobox"], input[placeholder*="plant" i], input[placeholder*="Select" i], input.react-datepicker-ignore-onclickoutside, .react-datepicker__input-container input',
             ),
           ).filter((el) => isElementVisible(el));
 
-          // If we have many, only re-click the one that might be relevant (e.g. contains part of the label)
-          // or if only one is visible.
-          for (const cb of comboboxInputs) {
+          // Phase 1 (RE-CLICK): Prioritize the last interacted element if it's a combobox or any input
+          let sortedCombos = [...comboboxInputs];
+          if (
+            lastInteractedElement &&
+            (lastInteractedElement.tagName === "INPUT" ||
+              lastInteractedElement.tagName === "BUTTON") &&
+            isElementVisible(lastInteractedElement)
+          ) {
+            sortedCombos = [
+              lastInteractedElement,
+              ...sortedCombos.filter((el) => el !== lastInteractedElement),
+            ];
+          }
+
+          for (const cb of sortedCombos) {
             logExecution(
               `Step ${index + 1}: Re-clicking combobox "${cb.placeholder || cb.getAttribute("aria-label")}" to reopen dropdown`,
               "info",
@@ -1550,7 +1563,6 @@ async function executeSingleStep(step, index) {
             cb.dispatchEvent(new Event("focus", { bubbles: true }));
             cb.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
             cb.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-            cb.dispatchEvent(new MouseEvent("click", { bubbles: true }));
             await new Promise((r) => setTimeout(r, 1500));
 
             element = locateElement(step, i);
@@ -1596,11 +1608,24 @@ async function executeSingleStep(step, index) {
 
             const searchInputs = Array.from(
               document.querySelectorAll(
-                'input[role="combobox"], input[placeholder*="Search" i], input[placeholder*="GSTIN" i], input[placeholder*="contact" i], input[placeholder*="company" i]',
+                'input[role="combobox"], input[placeholder*="Search" i], input[placeholder*="item" i], input[placeholder*="plant" i], input[placeholder*="GSTIN" i], input[placeholder*="contact" i], input[placeholder*="company" i]',
               ),
             ).filter((el) => isElementVisible(el));
 
-            for (const searchInput of searchInputs) {
+            // Phase 2 (SEARCH TYPE): Prioritize the last interacted element if it's an input
+            let sortedSearch = [...searchInputs];
+            if (
+              lastInteractedElement &&
+              lastInteractedElement.tagName === "INPUT" &&
+              isElementVisible(lastInteractedElement)
+            ) {
+              sortedSearch = [
+                lastInteractedElement,
+                ...sortedSearch.filter((el) => el !== lastInteractedElement),
+              ];
+            }
+
+            for (const searchInput of sortedSearch) {
               searchInput.click();
               searchInput.focus();
               await new Promise((r) => setTimeout(r, 200));
@@ -1651,8 +1676,32 @@ async function executeSingleStep(step, index) {
         element = clickableParent;
       }
 
-      // SETTLE TIME: Give frameworks a moment to update DOM before interacting
-      await new Promise((r) => setTimeout(r, 400));
+      // SETTLE TIME
+      await new Promise((r) => setTimeout(r, 600));
+
+      const isCheckboxOrRadio =
+        element.tagName === "INPUT" &&
+        (element.type === "radio" || element.type === "checkbox");
+
+      // REDUNDANCY CHECK: Skip if we just interacted with this checkbox/radio or its label/control
+      if (isCheckboxOrRadio && lastInteractedElement) {
+        const isSelf = element === lastInteractedElement;
+        const isMyLabel =
+          lastInteractedElement.tagName === "LABEL" &&
+          lastInteractedElement.control === element;
+        const isMyControl =
+          element.tagName === "INPUT" &&
+          lastInteractedElement === element.control; // unlikely but possible
+
+        if (isSelf || isMyLabel || isMyControl) {
+          logExecution(
+            `Step ${index + 1}: Skipping redundant click on checkbox/radio (already handled via label or previous click)`,
+            "info",
+          );
+          sendStepComplete(index);
+          return;
+        }
+      }
 
       element.scrollIntoView({
         behavior: "auto",
@@ -1699,12 +1748,11 @@ async function executeSingleStep(step, index) {
 
         // Use standard click for basic behavior
         element.click();
-
-        // Some libraries only listen for this specific event
-        element.dispatchEvent(new MouseEvent("click", eventOptions));
+        lastInteractedElement = element;
       } catch (e) {
         console.warn("Event dispatch failed, falling back to basic click", e);
         element.click();
+        lastInteractedElement = element;
       }
 
       console.log(
@@ -1731,10 +1779,10 @@ async function executeSingleStep(step, index) {
         desc.includes("next")
       ) {
         logExecution(
-          `Step ${index + 1}: Waiting 1.5s for transition after transition-triggering click...`,
+          `Step ${index + 1}: Waiting 2s for transition after transition-triggering click...`,
           "info",
         );
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 2000));
       }
 
       // Send STEP_COMPLETE immediately.
@@ -1744,7 +1792,7 @@ async function executeSingleStep(step, index) {
       sendStepComplete(index);
     } else if (step.action === "input") {
       // SETTLE TIME
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 500));
 
       element.scrollIntoView({
         behavior: "auto",
@@ -1770,10 +1818,17 @@ async function executeSingleStep(step, index) {
           element.tagName === "INPUT" &&
           (element.type === "radio" || element.type === "checkbox")
         ) {
-          element.checked = true;
-          element.dispatchEvent(new Event("click", { bubbles: true }));
-          element.dispatchEvent(new Event("input", { bubbles: true }));
-          element.dispatchEvent(new Event("change", { bubbles: true }));
+          if (!element.checked) {
+            element.checked = true;
+            lastInteractedElement = element;
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+          } else {
+            logExecution(
+              `Step ${index + 1}: Checkbox already checked, skipping redundant state enforcement`,
+              "info",
+            );
+          }
         } else {
           // React/Angular Support: Directly set value property to bypass tracking wrapper
           const prototype =
@@ -1791,6 +1846,7 @@ async function executeSingleStep(step, index) {
               "value",
             ).set;
             nativeInputValueSetter.call(element, step.value || "");
+            lastInteractedElement = element;
 
             // Dispatch full event sequence for frameworks
             element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1798,6 +1854,7 @@ async function executeSingleStep(step, index) {
           } else {
             // Fallback for custom components or labels that don't have a control
             element.value = step.value || "";
+            lastInteractedElement = element;
             element.dispatchEvent(new Event("input", { bubbles: true }));
             element.dispatchEvent(new Event("change", { bubbles: true }));
           }
@@ -1827,8 +1884,8 @@ async function executeSingleStep(step, index) {
       // Send STEP_COMPLETE directly — avoid setTimeout which can be killed by DOM teardowns
       sendStepComplete(index);
     } else if (step.action === "upload") {
-      // FILE UPLOAD: Create a synthetic file and attach it to the input
-      await new Promise((r) => setTimeout(r, 300));
+      // FILE UPLOAD
+      await new Promise((r) => setTimeout(r, 600));
 
       element.scrollIntoView({
         behavior: "auto",
