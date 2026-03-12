@@ -1072,5 +1072,145 @@
     "description": "Step 55 stalled for 30s: Click executed on Handling Charge at (1044.96875, 540.5)",
     "ariaSnapshot": null,
     "timestamp": "2026-03-10T07:32:30.374Z"
+  },
+  {
+    "id": "BUG-1773209035058",
+    "title": "Failure in Test 343",
+    "description": "Step 132 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-11T06:03:55.058Z"
+  },
+  {
+    "id": "BUG-1773213306509",
+    "title": "Failure in new",
+    "description": "clickableParent is not defined",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_324_1773213306462.json",
+    "timestamp": "2026-03-11T07:15:06.509Z"
+  },
+  {
+    "id": "BUG-1773213344718",
+    "title": "Failure in new",
+    "description": "clickableParent is not defined",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_324_1773213344666.json",
+    "timestamp": "2026-03-11T07:15:44.718Z"
+  },
+  {
+    "id": "BUG-1773213916209",
+    "title": "Failure in Test 343",
+    "description": "Step 27 stalled for 30s: Element found, executing click",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-11T07:25:16.209Z"
+  },
+  {
+    "id": "BUG-1773221794674",
+    "title": "Failure in sdf",
+    "description": "Element not found for step 18: Element not found or not visible for step:18 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_344_1773221794599.json",
+    "timestamp": "2026-03-11T09:36:34.674Z"
+  },
+  {
+    "id": "BUG-1773224593430",
+    "title": "Failure in dsasa",
+    "description": "Timeout waiting for step 5",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-11T10:23:13.430Z"
+  },
+  {
+    "id": "BUG-1773290671311",
+    "title": "Failure in dfghfh",
+    "description": "Element not found for step 18: Element not found or not visible for step:18 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_349_1773290671265.json",
+    "timestamp": "2026-03-12T04:44:31.311Z"
+  },
+  {
+    "id": "BUG-1773291205925",
+    "title": "Failure in new",
+    "description": "currentUrl is not defined",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_324_1773291205902.json",
+    "timestamp": "2026-03-12T04:53:25.925Z"
+  },
+  {
+    "id": "BUG-1773291230444",
+    "title": "Failure in new",
+    "description": "currentUrl is not defined",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_324_1773291230421.json",
+    "timestamp": "2026-03-12T04:53:50.444Z"
+  },
+  {
+    "id": "BUG-1773291860123",
+    "title": "Failure in Test 324",
+    "description": "Step 35 stalled for 30s: Waiting 2s for transition after transition-triggering click...",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-12T05:04:20.123Z"
+  },
+  {
+    "id": "BUG-1773292663724",
+    "title": "Failure in Test 351",
+    "description": "Step 22 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-12T05:17:43.725Z"
+  },
+  {
+    "id": "BUG-1773294022359",
+    "title": "Failure in dsfsf",
+    "description": "Element not found for step 10: Element not found or not visible for step:10 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_351_1773294022323.json",
+    "timestamp": "2026-03-12T05:40:22.359Z"
+  },
+  {
+    "id": "BUG-1773294436654",
+    "title": "Failure in wqfwqref",
+    "description": "Element not found for step 10: Element not found or not visible for step:10 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_352_1773294436638.json",
+    "timestamp": "2026-03-12T05:47:16.654Z"
+  },
+  {
+    "id": "BUG-1773294693217",
+    "title": "Failure in dfghfh",
+    "description": "Element not found for step 14: Element not found or not visible for step:14 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_349_1773294693062.json",
+    "timestamp": "2026-03-12T05:51:33.217Z"
+  },
+  {
+    "id": "BUG-1773295237625",
+    "title": "Failure in dfghfh",
+    "description": "attemptIndex is not defined",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_349_1773295237507.json",
+    "timestamp": "2026-03-12T06:00:37.625Z"
+  },
+  {
+    "id": "BUG-1773297983345",
+    "title": "Failure in Test 354",
+    "description": "Step ? stalled for 30s: No step details",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-12T06:46:23.345Z"
+  },
+  {
+    "id": "BUG-1773307526944",
+    "title": "Failure in Test 354",
+    "description": "Step 17 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-12T09:25:26.944Z"
+  },
+  {
+    "id": "BUG-1773310750227",
+    "title": "Failure in Test 355",
+    "description": "Step 15 stalled for 30s: Attempting to expand section \"dashboard\" to find target",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-12T10:19:10.227Z"
+  },
+  {
+    "id": "BUG-1773311648189",
+    "title": "Failure in Test 355",
+    "description": "Step 15 stalled for 30s: Attempting to expand section \"dashboard\" to find target",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-12T10:34:08.189Z"
+  },
+  {
+    "id": "BUG-1773313077747",
+    "title": "Failure in sadfsad",
+    "description": "Element not found for step 55: Element not found or not visible for step:55 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_356_1773313077623.json",
+    "timestamp": "2026-03-12T10:57:57.747Z"
   }
 ]

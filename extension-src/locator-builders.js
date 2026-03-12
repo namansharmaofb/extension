@@ -63,90 +63,72 @@ function getFullXPath(element) {
 
 /**
  * Generates selectors in Chrome DevTools Recorder format.
- * 12 strategies in priority order — no post-hoc reordering needed.
  * @param {HTMLElement} element
  * @returns {Object} Selector object with arrays and metadata
  */
+const SELECTOR_TEST_ATTRS = ["data-testid", "data-test", "data-cy"];
+const ACTIONABLE_PARENT_SELECTOR =
+  'button, a, [role="button"], input[type="submit"], input[type="button"]';
+const MODAL_CONTAINER_SELECTOR =
+  '.MuiDialog-root, .MuiDrawer-root, [role="dialog"]';
+
 function generateSelectors(element) {
+  element = normalizeSelectorTarget(element);
   if (!element || element.nodeType !== 1) return null;
 
-  const selectors = []; // Array of [selector] arrays — built in priority order
+  const selectors = [];
+  const pushSelector = (selector) => {
+    if (!selector || selectors.some((entry) => entry[0] === selector)) return;
+    selectors.push([selector]);
+  };
 
-  // ── 1. data-testid / data-cy / data-test / data-qa ─────────────────
-  // Most precise — explicitly set for testing
-  const testAttrs = ["data-testid", "data-cy", "data-test", "data-qa"];
-  for (const attr of testAttrs) {
-    if (element.hasAttribute(attr)) {
-      const value = element.getAttribute(attr);
-      if (value && !isDynamic(value)) {
-        selectors.push([`[${attr}="${value.replace(/"/g, '\\"')}"]`]);
-      }
-    }
-  }
+  const stableCandidates = collectStableSelectorCandidates(element);
+  const primary = pickBestStableSelector(element, stableCandidates);
+  const text = getVisibleText(element).replace(/\s+/g, " ").trim();
 
-  // ── 2. Stable ID ───────────────────────────────────────────────────
-  if (element.id && !isDynamic(element.id)) {
-    selectors.push([`#${CSS.escape(element.id)}`]);
-  }
+  pushSelector(primary);
+  stableCandidates.forEach(({ value }) => pushSelector(value));
 
-  // ── 3. Name attribute (critical for forms) ─────────────────────────
-  if (element.hasAttribute("name")) {
-    const name = element.getAttribute("name");
-    if (name && !isDynamic(name)) {
-      const tag = element.tagName.toLowerCase();
-      selectors.push([`${tag}[name="${name.replace(/"/g, '\\"')}"]`]);
-    }
-  }
-
-  // ── 4. Placeholder (for inputs — very specific) ────────────────────
-  // Skip short/dynamic placeholders that may be typed content (React-Select, etc.)
   if (element.hasAttribute("placeholder")) {
     const placeholder = element.getAttribute("placeholder");
     if (
       placeholder &&
       placeholder.trim().length >= 3 &&
-      !/^\d+$/.test(placeholder.trim()) && // Skip pure numbers
-      placeholder.trim().length < 100 // Skip absurdly long placeholders
+      !/^\d+$/.test(placeholder.trim()) &&
+      placeholder.trim().length < 100
     ) {
-      selectors.push([`[placeholder="${placeholder.replace(/"/g, '\\"')}"]`]);
+      pushSelector(`[placeholder="${escapeSelectorValue(placeholder)}"]`);
     }
   }
 
-  // ── 5. ARIA (role + accessible name) ───────────────────────────────
-  // Placed after attr-based selectors because ARIA labels can match
-  // multiple elements (e.g., section header AND the input inside it)
   const ariaSelector = buildAriaSelector(element);
-  if (ariaSelector) {
-    selectors.push([ariaSelector]);
-  }
+  pushSelector(ariaSelector);
 
-  // ── 6. XPath text match (tag + text — very specific) ───────────────
-  const text = getVisibleText(element).replace(/\s+/g, " ").trim();
+  const contextualButtonXPath = buildContextualButtonXPath(element);
+  pushSelector(contextualButtonXPath);
+
   if (
     text &&
-    text.length > 0 &&
     text.length < 50 &&
     !text.includes("'") &&
     !isGenericIconText(text)
   ) {
     const tag = element.tagName.toLowerCase();
-    selectors.push([`xpath///${tag}[normalize-space(.)='${text}']`]);
+    pushSelector(`xpath///${tag}[normalize-space(.)='${text}']`);
     if (text.length > 3) {
-      selectors.push([
-        `xpath///${tag}[contains(normalize-space(.), '${text}')]`,
-      ]);
+      pushSelector(`xpath///${tag}[contains(normalize-space(.), '${text}')]`);
     }
   }
 
-  // ── 7. Alt / Title attributes ──────────────────────────────────────
   if (element.hasAttribute("alt")) {
     const alt = element.getAttribute("alt");
     if (alt && alt.trim().length > 0 && alt.length < 80 && !isDynamic(alt)) {
-      selectors.push([
-        `${element.tagName.toLowerCase()}[alt="${alt.replace(/"/g, '\\"')}"]`,
-      ]);
+      pushSelector(
+        `${element.tagName.toLowerCase()}[alt="${escapeSelectorValue(alt)}"]`,
+      );
     }
   }
+
   if (element.hasAttribute("title")) {
     const title = element.getAttribute("title");
     if (
@@ -155,59 +137,42 @@ function generateSelectors(element) {
       title.length < 80 &&
       !isDynamic(title)
     ) {
-      selectors.push([
-        `${element.tagName.toLowerCase()}[title="${title.replace(/"/g, '\\"')}"]`,
-      ]);
+      pushSelector(
+        `${element.tagName.toLowerCase()}[title="${escapeSelectorValue(title)}"]`,
+      );
     }
   }
 
-  // ── 8. Href / Src (for links and images with stable URLs) ──────────
   if (element.tagName === "A" && element.hasAttribute("href")) {
     const href = element.getAttribute("href");
     if (href && isStableUrl(href)) {
-      selectors.push([`a[href="${href.replace(/"/g, '\\"')}"]`]);
+      pushSelector(`a[href="${escapeSelectorValue(href)}"]`);
     }
   }
+
   if (element.tagName === "IMG" && element.hasAttribute("src")) {
     const src = element.getAttribute("src");
     if (src && isStableUrl(src)) {
-      selectors.push([`img[src="${src.replace(/"/g, '\\"')}"]`]);
+      pushSelector(`img[src="${escapeSelectorValue(src)}"]`);
     }
   }
 
-  // ── 9. Smart CSS selector (stable attrs + limited classes) ─────────
   const css = buildSelector(element);
-  if (css) {
-    selectors.push([css]);
-  }
-
-  // ── 10. nth-of-type within parent (controlled positional fallback) ─
-  const nthSelector = buildNthSelector(element);
-  if (nthSelector) {
-    selectors.push([nthSelector]);
-  }
-
-  // ── 11. Full CSS path fallback ─────────────────────────────────────
   const cssPath = buildCssPath(element);
-  if (cssPath && cssPath !== css) {
-    selectors.push([cssPath]);
-  }
-
-  // ── 12. XPath fallback (absolute path — last resort) ───────────────
   const xpath = getXPath(element);
-  if (xpath) {
-    selectors.push([`xpath//${xpath}`]);
-  }
+  const primarySelector =
+    primary || selectors[0]?.[0] || css || cssPath || (xpath ? `xpath//${xpath}` : "");
 
-  // Build the result object
-  const primary = selectors.length > 0 ? selectors[0][0] : css || xpath;
+  pushSelector(css);
+  pushSelector(cssPath);
+  if (xpath) pushSelector(`xpath//${xpath}`);
 
   return {
-    selectors: selectors,
-    selector: primary,
-    selectorType: getSelectorType(primary),
-    css: css,
-    xpath: xpath,
+    selectors,
+    selector: primarySelector,
+    selectorType: getSelectorType(primarySelector),
+    css,
+    xpath,
     id: element.id && !isDynamic(element.id) ? element.id : null,
     attributes: {
       "data-testid": element.getAttribute("data-testid"),
@@ -225,6 +190,292 @@ function generateSelectors(element) {
     },
     innerText: text || "",
   };
+}
+
+function generateStableSelector(element) {
+  element = normalizeSelectorTarget(element);
+  if (!element || element.nodeType !== 1) return "";
+  const candidates = collectStableSelectorCandidates(element);
+  return pickBestStableSelector(element, candidates);
+}
+
+function normalizeSelectorTarget(element) {
+  if (!element || element.nodeType !== 1) return null;
+  const optionParent = element.closest?.(
+    '[role="option"], .slds-listbox__option, li.slds-listbox__item, .MuiMenuItem-root, .MuiAutocomplete-option',
+  );
+  if (optionParent) return optionParent;
+  const tag = (element.tagName || "").toLowerCase();
+  const className =
+    typeof element.className === "string"
+      ? element.className
+      : element.className?.baseVal || "";
+  const isNestedTarget =
+    ["svg", "path", "span", "p", "i", "use", "circle", "rect"].includes(tag) ||
+    /\b(icon|svgicon)\b/i.test(className);
+  return isNestedTarget
+    ? element.closest(ACTIONABLE_PARENT_SELECTOR) || element
+    : element;
+}
+
+function collectStableSelectorCandidates(element) {
+  const scopeRoot = element.closest(MODAL_CONTAINER_SELECTOR);
+  const scopePrefix = getModalScopeSelector(scopeRoot);
+  const tag = element.tagName.toLowerCase();
+  const candidates = [];
+  const push = (priority, selector, scoped = true) => {
+    if (!selector) return;
+    const value =
+      scoped && scopePrefix && !selector.startsWith("aria/")
+        ? `${scopePrefix} ${selector}`
+        : selector;
+    candidates.push({ priority, value });
+  };
+
+  for (const [index, attr] of SELECTOR_TEST_ATTRS.entries()) {
+    const value = element.getAttribute(attr);
+    if (value && !isDynamic(value)) {
+      push(index + 1, `[${attr}="${escapeSelectorValue(value)}"]`);
+    }
+  }
+
+  const ariaLabel = element.getAttribute("aria-label");
+  if (ariaLabel && !isDynamic(ariaLabel)) {
+    push(4, `[aria-label="${escapeSelectorValue(ariaLabel)}"]`);
+  }
+
+  if (element.id && !isDynamicId(element.id)) {
+    push(5, `#${CSS.escape(element.id)}`);
+  }
+
+  const name = element.getAttribute("name");
+  if (name && !isDynamic(name)) {
+    push(6, `${tag}[name="${escapeSelectorValue(name)}"]`);
+  }
+
+  push(7, buildActionableTextSelector(element), false);
+
+  const role = (element.getAttribute("role") || "").trim();
+  if (role) {
+    push(8, `[role="${escapeSelectorValue(role)}"]`);
+    push(8, `${tag}[role="${escapeSelectorValue(role)}"]`);
+  }
+
+  const stableClass = getStableClasses(element)[0];
+  if (stableClass) {
+    push(9, `.${CSS.escape(stableClass)}`);
+    push(9, `${tag}.${CSS.escape(stableClass)}`);
+  }
+
+  push(10, buildFallbackCssPath(element, scopeRoot), false);
+
+  return candidates.filter(
+    (candidate, index, list) =>
+      candidate.value &&
+      list.findIndex((entry) => entry.value === candidate.value) === index,
+  );
+}
+
+function pickBestStableSelector(element, candidates) {
+  const stableMatches = candidates.filter(
+    ({ value, priority }) =>
+      priority === 10 || isSelectorUnique(value, element),
+  );
+  stableMatches.sort(
+    (left, right) =>
+      left.priority - right.priority || left.value.length - right.value.length,
+  );
+  return stableMatches[0]?.value || buildFallbackCssPath(element);
+}
+
+function buildActionableTextSelector(element) {
+  const role = getAriaRole(element);
+  const isActionable =
+    ["button", "link"].includes(role) ||
+    element.matches?.(ACTIONABLE_PARENT_SELECTOR);
+  const text = getVisibleText(element).replace(/\s+/g, " ").trim();
+
+  if (
+    !isActionable ||
+    !text ||
+    text.length > 80 ||
+    isGenericIconText(text) ||
+    /[[\]]/.test(text)
+  ) {
+    return "";
+  }
+
+  const base = role ? `aria/${role}[${text}]` : `aria/${text}`;
+  const overlay = element.closest(MODAL_CONTAINER_SELECTOR);
+  const overlayName = overlay ? getElementDescriptor(overlay) : "";
+  const overlayRole = overlay ? getAriaRole(overlay) : "";
+
+  if (overlay && overlay !== element && (!overlayName || !overlayRole)) {
+    return "";
+  }
+
+  if (
+    overlay &&
+    overlay !== element &&
+    overlayName &&
+    overlayRole &&
+    overlayName.length < 80 &&
+    !/[[\]]/.test(overlayName)
+  ) {
+    return `aria/${overlayRole}[${overlayName.replace(/\s+/g, " ").trim()}] >> ${base}`;
+  }
+
+  return base;
+}
+
+function getModalScopeSelector(container) {
+  if (!container) return "";
+  for (const attr of SELECTOR_TEST_ATTRS) {
+    const value = container.getAttribute(attr);
+    if (value && !isDynamic(value)) {
+      return `[${attr}="${escapeSelectorValue(value)}"]`;
+    }
+  }
+  const ariaLabel = container.getAttribute("aria-label");
+  if (ariaLabel && !isDynamic(ariaLabel)) {
+    return `[aria-label="${escapeSelectorValue(ariaLabel)}"]`;
+  }
+  if (container.id && !isDynamicId(container.id)) {
+    return `#${CSS.escape(container.id)}`;
+  }
+  if (container.matches(".MuiDialog-root")) return ".MuiDialog-root";
+  if (container.matches(".MuiDrawer-root")) return ".MuiDrawer-root";
+  return '[role="dialog"]';
+}
+
+function escapeSelectorValue(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function getStableClasses(element) {
+  const className =
+    typeof element.className === "string"
+      ? element.className
+      : element.className?.baseVal || "";
+  return className
+    .split(/\s+/)
+    .filter(
+      (cls) =>
+        cls &&
+        !isDynamicClass(cls) &&
+        !/^(Mui-(checked|disabled|error|expanded|focusVisible|focused|selected)|is-|has-|active|open|closed|selected|disabled|focused)$/i.test(
+          cls,
+        ),
+    )
+    .sort((left, right) => left.length - right.length);
+}
+
+function buildCssSegment(element) {
+  if (!element || element.nodeType !== 1) return "";
+  for (const attr of [...SELECTOR_TEST_ATTRS, "name", "aria-label"]) {
+    const value = element.getAttribute?.(attr);
+    if (value && !isDynamic(value)) {
+      return `${element.tagName.toLowerCase()}[${attr}="${escapeSelectorValue(value)}"]`;
+    }
+  }
+  if (element.id && !isDynamicId(element.id)) {
+    return `#${CSS.escape(element.id)}`;
+  }
+  const stableClass = getStableClasses(element)[0];
+  if (stableClass) {
+    return `${element.tagName.toLowerCase()}.${CSS.escape(stableClass)}`;
+  }
+  const role = (element.getAttribute("role") || "").trim();
+  return role
+    ? `${element.tagName.toLowerCase()}[role="${escapeSelectorValue(role)}"]`
+    : element.tagName.toLowerCase();
+}
+
+function buildFallbackCssPath(element, scopeRoot = element.closest?.(MODAL_CONTAINER_SELECTOR)) {
+  element = normalizeSelectorTarget(element);
+  if (!element) return "";
+  const scopePrefix = getModalScopeSelector(scopeRoot);
+  const path = [];
+  let current = element;
+
+  while (
+    current &&
+    current.nodeType === 1 &&
+    current !== document.body &&
+    current !== scopeRoot
+  ) {
+    path.unshift(buildCssSegment(current));
+    const candidate = scopePrefix
+      ? `${scopePrefix} ${path.join(" > ")}`
+      : path.join(" > ");
+    if (isSelectorUnique(candidate, element)) return candidate;
+    current = current.parentElement;
+  }
+
+  const fallback = path.join(" > ");
+  if (!fallback) return scopePrefix;
+  return scopePrefix ? `${scopePrefix} ${fallback}` : fallback;
+}
+
+function isSelectorUnique(selector, element) {
+  if (!selector || !element) return false;
+  try {
+    if (selector.startsWith("aria/")) {
+      const matches = queryAriaSelector(selector);
+      return matches.length === 1 && matches[0] === element;
+    }
+    if (selector.startsWith("xpath/")) {
+      const matches = getElementsByXPath(selector.slice(6));
+      return matches.length === 1 && matches[0] === element;
+    }
+    const matches = Array.from(document.querySelectorAll(selector));
+    return matches.length === 1 && matches[0] === element;
+  } catch (err) {
+    return false;
+  }
+}
+
+function queryAriaSelector(selector) {
+  if (!selector.startsWith("aria/")) return [];
+  const parts = selector.split(" >> ");
+  let contexts = [document];
+
+  for (const rawPart of parts) {
+    const part = rawPart.startsWith("aria/") ? rawPart.slice(5) : rawPart;
+    const match = part.match(/^([a-z]+)\[(.+)\]$/i);
+    const role = match ? match[1].toLowerCase() : null;
+    const name = (match ? match[2] : part).replace(/\s+/g, " ").trim().toLowerCase();
+    const next = [];
+
+    for (const context of contexts) {
+      for (const node of getAriaCandidatePool(context)) {
+        const label = (node.getAttribute?.("aria-label") || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+        const descriptor = getElementDescriptor(node)
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+        const text = getVisibleText(node).replace(/\s+/g, " ").trim().toLowerCase();
+        const matchedName =
+          name && [label, descriptor, text].some((value) => value === name);
+        if (!matchedName) continue;
+        if (!role || getAriaRole(node) === role) next.push(node);
+      }
+    }
+
+    contexts = next;
+    if (!contexts.length) break;
+  }
+
+  return contexts;
+}
+
+function getAriaCandidatePool(context) {
+  if (context === document) return Array.from(document.querySelectorAll("*"));
+  if (!context || !context.querySelectorAll) return [];
+  return [context, ...Array.from(context.querySelectorAll("*"))];
 }
 
 /**
@@ -282,6 +533,39 @@ function buildAriaSelector(element) {
   return `aria/${finalName}`;
 }
 
+function buildContextualButtonXPath(element) {
+  if (!element || element.tagName !== "BUTTON") return null;
+  const descriptor = (getElementDescriptor(element) || "").replace(/\s+/g, " ").trim();
+  if (!["Edit", "Delete"].includes(descriptor)) return null;
+
+  let current = element.parentElement;
+  let contextText = "";
+  let depth = 0;
+  while (current && current !== document.body && depth < 6) {
+    const text = getVisibleText(current).replace(/\s+/g, " ").trim();
+    if (
+      text &&
+      text.length > descriptor.length + 4 &&
+      text.length < 120 &&
+      !text.toLowerCase().startsWith(descriptor.toLowerCase())
+    ) {
+      contextText = text.split(/\s{2,}|\n/)[0].trim();
+      break;
+    }
+    current = current.parentElement;
+    depth++;
+  }
+
+  if (!contextText || contextText.includes("'")) return null;
+
+  const iconPredicate =
+    descriptor === "Edit"
+      ? ".//i[contains(normalize-space(.), 'edit')] or .//*[contains(@class, 'edit')]"
+      : ".//i[contains(normalize-space(.), 'delete')] or .//*[contains(@class, 'delete')]";
+
+  return `xpath///button[(${iconPredicate}) and ancestor::*[contains(normalize-space(.), '${contextText}')]]`;
+}
+
 /**
  * Finds the nearest MUI overlay (Modal, Dialog, Drawer, Popover).
  * @param {HTMLElement} el
@@ -334,9 +618,25 @@ function getNearestOverlay(el) {
  * @returns {string|null}
  */
 function getAriaRole(element) {
+  const className =
+    typeof element.className === "string"
+      ? element.className
+      : element.className?.baseVal || "";
+
   // Explicit role attribute takes priority
   const explicitRole = element.getAttribute("role");
   if (explicitRole) return explicitRole;
+
+  if (
+    element.matches?.(
+      '.slds-listbox__option, li.slds-listbox__item, .MuiMenuItem-root, .MuiAutocomplete-option',
+    ) ||
+    /\b(slds-listbox__option|MuiMenuItem-root|MuiAutocomplete-option)\b/.test(
+      className,
+    )
+  ) {
+    return "option";
+  }
 
   // Implicit roles from HTML semantics
   const tag = element.tagName;
@@ -413,29 +713,7 @@ function isStableUrl(url) {
  * @returns {string|null}
  */
 function buildNthSelector(element) {
-  if (!element || !element.parentElement) return null;
-  const parent = element.parentElement;
-  const tag = element.tagName.toLowerCase();
-  const sameTagSiblings = Array.from(parent.children).filter(
-    (c) => c.tagName === element.tagName,
-  );
-
-  // Only useful when there are multiple siblings of the same type
-  if (sameTagSiblings.length <= 1) return null;
-
-  const index = sameTagSiblings.indexOf(element) + 1;
-  let parentSelector = "";
-
-  // Try to scope to a stable parent
-  if (parent.id && !isDynamic(parent.id)) {
-    parentSelector = `#${CSS.escape(parent.id)}`;
-  } else if (parent.getAttribute("data-testid")) {
-    parentSelector = `[data-testid="${parent.getAttribute("data-testid")}"]`;
-  } else {
-    parentSelector = parent.tagName.toLowerCase();
-  }
-
-  return `${parentSelector} > ${tag}:nth-of-type(${index})`;
+  return null;
 }
 
 /**
@@ -466,24 +744,21 @@ function getSelectorType(selector) {
 
 function isDynamic(value) {
   if (typeof value !== "string") return true;
-  // Ignore purely numeric long strings or hex-like strings
-  if (/^[0-9a-f]{16,}$/.test(value)) return true;
+  const normalized = value.trim();
 
-  // React / MUI dynamic IDs
-  if (/^:(r[0-9a-z]*):$/.test(value)) return true;
-  if (/mui-[0-9]+/.test(value)) return true;
+  if (!normalized) return true;
+  if (normalized.length > 120) return true;
+  if (/^[0-9a-f]{8,}$/i.test(normalized)) return true;
+  if (/^:(r[0-9a-z-]*):$/i.test(normalized)) return true;
+  if (/^(mui-\d+|react-[\w-]+|headlessui-[\w-]+|radix-[\w-]+)/i.test(normalized))
+    return true;
+  if (/^(css|jsx|sc)-[a-z0-9]{5,}/i.test(normalized)) return true;
+  if (/(^|[-_])(uuid|random|generated|temp|nonce|token)([-_]|$)/i.test(normalized))
+    return true;
+  if (/\d{5,}/.test(normalized)) return true;
+  if (/[a-f0-9]{10,}/i.test(normalized) && /[-_]/.test(normalized)) return true;
 
-  // Dynamic Popper/Portal IDs with random suffix
-  if (/(popper|modal|dialog|select|menu)-[a-zA-Z0-9]{8,}/i.test(value)) {
-    const parts = value.split("-");
-    const suffix = parts[parts.length - 1];
-    if (/[A-Z]/.test(suffix) && /[a-z]/.test(suffix)) return true;
-    if (/[0-9]/.test(suffix) && /[a-zA-Z]/.test(suffix)) return true;
-  }
-
-  // Allow common stable prefixes
-  if (/^(mui|btn|nav|list|item|cell)-/i.test(value)) return false;
-  return /\d{5,}|uuid|random|test-?id|tfid-/i.test(value);
+  return false;
 }
 
 function isGenericIconText(text) {
@@ -534,29 +809,7 @@ function isDynamicClass(cls) {
 }
 
 function buildCssPath(el) {
-  const path = [];
-
-  while (el && el.nodeType === 1 && el !== document.body) {
-    let selector = el.tagName.toLowerCase();
-
-    if (el.className) {
-      const cls = el.className.split(" ").filter(Boolean).slice(0, 2).join(".");
-      if (cls) selector += "." + cls;
-    }
-
-    const siblings = Array.from(el.parentNode.children).filter(
-      (e) => e.tagName === el.tagName,
-    );
-
-    if (siblings.length > 1) {
-      selector += `:nth-child(${Array.from(el.parentNode.children).indexOf(el) + 1})`;
-    }
-
-    path.unshift(selector);
-    el = el.parentNode;
-  }
-
-  return path.join(" > ");
+  return buildFallbackCssPath(el);
 }
 
 function buildXPath(el) {
@@ -583,83 +836,12 @@ function buildXPath(el) {
  * @param {HTMLElement} element
  */
 function buildSelector(element) {
+  element = normalizeSelectorTarget(element);
   if (!element) return "";
-
-  if (element.id && !isDynamicId(element.id)) {
-    return `#${CSS.escape(element.id)}`;
-  }
-
-  const stableAttrs = [
-    "data-testid",
-    "data-cy",
-    "data-test-id",
-    "data-qa",
-    "name",
-    "role",
-    "placeholder",
-    "aria-label",
-  ];
-  for (const attr of stableAttrs) {
-    if (element.hasAttribute(attr)) {
-      const val = element.getAttribute(attr);
-      if (val && !isDynamicId(val)) {
-        return `${element.tagName.toLowerCase()}[${attr}="${val}"]`;
-      }
-    }
-  }
-
-  let path = [];
-  let current = element;
-  while (current && current.nodeType === Node.ELEMENT_NODE && path.length < 5) {
-    let selector = current.nodeName.toLowerCase();
-
-    if (current.className && typeof current.className === "string") {
-      const classes = current.className.trim().split(/\s+/);
-      const stableClasses = classes.filter(
-        (cls) => cls && !isDynamicClass(cls),
-      );
-      if (stableClasses.length > 0) {
-        selector += `.${stableClasses
-          .slice(0, 2)
-          .map((cls) => CSS.escape(cls))
-          .join(".")}`;
-      }
-    }
-
-    const parent = current.parentElement;
-    if (parent) {
-      const siblings = Array.from(parent.children).filter(
-        (child) => child.nodeName === current.nodeName,
-      );
-      if (siblings.length > 1) {
-        const index = siblings.indexOf(current) + 1;
-        selector += `:nth-of-type(${index})`;
-      }
-    }
-
-    path.unshift(selector);
-    current = current.parentElement;
-
-    if (current && current.id && !isDynamicId(current.id)) {
-      path.unshift(`#${CSS.escape(current.id)}`);
-      break;
-    }
-
-    let foundStableAttr = false;
-    for (const attr of stableAttrs) {
-      if (current && current.hasAttribute(attr)) {
-        const val = current.getAttribute(attr);
-        if (val && !isDynamicId(val)) {
-          path.unshift(`${current.tagName.toLowerCase()}[${attr}="${val}"]`);
-          foundStableAttr = true;
-          break;
-        }
-      }
-    }
-    if (foundStableAttr) break;
-  }
-
-  return path.join(" > ");
+  const cssCandidate = collectStableSelectorCandidates(element).find(
+    ({ value }) => value && !value.startsWith("aria/"),
+  );
+  return cssCandidate?.value || buildFallbackCssPath(element);
 }
 
 /**

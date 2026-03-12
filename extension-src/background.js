@@ -270,6 +270,8 @@ async function executeCurrentStep() {
         type: "EXECUTE_SINGLE_STEP",
         step: step,
         stepIndex: executionState.currentIndex,
+        nextStep:
+          executionState.steps[executionState.currentIndex + 1] || null,
       },
       (response) => {
         if (chrome.runtime.lastError) {

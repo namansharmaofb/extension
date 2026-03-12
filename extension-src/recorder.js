@@ -11,10 +11,16 @@ function getInteractiveParent(element) {
   let current = element;
   let depth = 0;
   const maxDepth = 10; // Slightly deeper for complex shadow DOM/MUI structures
+  const optionSelector =
+    '[role="option"], .slds-listbox__option, li.slds-listbox__item, .MuiMenuItem-root, .MuiAutocomplete-option';
 
   while (current && current !== document.body && depth < maxDepth) {
     const tagName = (current.tagName || "").toUpperCase();
     const role = (current.getAttribute("role") || "").toLowerCase();
+
+    if (current.matches && current.matches(optionSelector)) {
+      return current;
+    }
 
     // Semantic interactive elements
     if (
@@ -53,6 +59,7 @@ function getInteractiveParent(element) {
   const targetTag = (element.tagName || "").toUpperCase();
   const decorationTags = [
     "SPAN",
+    "P",
     "I",
     "SMALL",
     "B",

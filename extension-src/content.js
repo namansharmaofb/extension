@@ -68,7 +68,7 @@ if (!window.__recorder_initialized) {
               }),
             );
         } else {
-          executeSingleStep(message.step, message.stepIndex);
+          executeSingleStep(message.step, message.stepIndex, message.nextStep);
         }
       }
       sendResponse({ success: true, message: "Step execution started" });

@@ -1,5 +1,7 @@
 // Engine for finding elements and executing commands during flow playback
 let lastInteractedElement = null;
+let lastInteractionPoint = null;
+let currentPlaybackContext = { nextStep: null };
 
 /**
  * Extracts the accessible name and optional role from an ARIA selector string.
@@ -151,6 +153,207 @@ function preferOverlayElement(visibleElements) {
     return topCandidates[topCandidates.length - 1].el;
   }
   return null;
+}
+
+function preferNearbyElement(visibleElements) {
+  if (
+    !visibleElements ||
+    visibleElements.length < 2 ||
+    !lastInteractionPoint ||
+    typeof lastInteractionPoint.x !== "number" ||
+    typeof lastInteractionPoint.y !== "number"
+  ) {
+    return null;
+  }
+
+  const ranked = visibleElements
+    .map((el) => {
+      const rect = el.getBoundingClientRect();
+      if (!rect.width && !rect.height) return null;
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(
+        centerX - lastInteractionPoint.x,
+        centerY - lastInteractionPoint.y,
+      );
+      return { el, distance };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.distance - b.distance);
+
+  return ranked[0]?.el || null;
+}
+
+function getOverlayAncestor(el) {
+  let current = el;
+  let depth = 0;
+  while (current && current !== document.body && depth < 20) {
+    const role = (current.getAttribute?.("role") || "").toLowerCase();
+    const className =
+      typeof current.className === "string"
+        ? current.className
+        : current.className?.baseVal || "";
+    if (
+      role === "dialog" ||
+      role === "alertdialog" ||
+      current.tagName === "DIALOG" ||
+      /\b(MuiDialog-root|MuiDrawer-root|MuiModal-root|drawerInner|modalWrapper)\b/.test(
+        className,
+      )
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+    depth++;
+  }
+  return null;
+}
+
+function preferContextualElement(visibleElements, step) {
+  const nextStep = currentPlaybackContext.nextStep;
+  const stepDesc = (step?.description || "").toLowerCase().trim();
+  if (!visibleElements || visibleElements.length < 2 || stepDesc !== "edit") {
+    return null;
+  }
+
+  const nextTarget = (nextStep?.target || "").toLowerCase();
+  const nextDesc = (nextStep?.description || "").toLowerCase();
+  const keywords = new Set();
+  const quotedParts = (nextStep?.target || "").match(/"([^"]+)"/g) || [];
+  for (const part of quotedParts) {
+    const normalized = part.replace(/"/g, "").trim().toLowerCase();
+    if (normalized && normalized.length > 3) keywords.add(normalized);
+    const shortPrefix = normalized.split(",")[0]?.trim();
+    if (shortPrefix && shortPrefix.length > 3) keywords.add(shortPrefix);
+  }
+  if (nextDesc && nextDesc.length > 2) keywords.add(nextDesc);
+
+  if (nextTarget.includes("companyaddress") || nextDesc.includes("billing")) {
+    ["billing address", "billing", "company"].forEach((k) => keywords.add(k));
+  } else if (
+    nextTarget.includes("#address-") ||
+    nextTarget.includes("address-tfid") ||
+    nextDesc === "address*" ||
+    nextDesc.includes("shipping")
+  ) {
+    ["shipping address", "ship to plant", "shipping", "address"].forEach((k) =>
+      keywords.add(k),
+    );
+  }
+
+  if (!keywords.size) {
+    return null;
+  }
+
+  const ranked = visibleElements
+    .map((el) => {
+      let current = el;
+      let depth = 0;
+      let score = 0;
+      while (current && current !== document.body && depth < 6) {
+        const text = getVisibleText(current).toLowerCase();
+        for (const keyword of keywords) {
+          if (!keyword) continue;
+          if (text.includes(keyword)) {
+            score += keyword.length > 12 ? 8 : 3;
+          }
+        }
+
+        const siblingTexts = [
+          current.previousElementSibling,
+          current.nextElementSibling,
+          current.parentElement?.previousElementSibling,
+        ]
+          .filter(Boolean)
+          .map((node) => getVisibleText(node).toLowerCase())
+          .join(" ");
+
+        for (const keyword of keywords) {
+          if (!keyword) continue;
+          if (siblingTexts.includes(keyword)) {
+            score += keyword.length > 12 ? 6 : 2;
+          }
+        }
+
+        current = current.parentElement;
+        depth++;
+      }
+      return { el, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return ranked[0] && ranked[0].score > 0 ? ranked[0].el : null;
+}
+
+function getStepContextTerms(step) {
+  const nextStep = currentPlaybackContext.nextStep;
+  const terms = new Set();
+  const candidates = [step?.description, nextStep?.description, nextStep?.target];
+
+  for (const value of candidates) {
+    if (!value || typeof value !== "string") continue;
+    const normalized = value.replace(/\s+/g, " ").replace(/[*"]/g, "").trim();
+    if (!normalized) continue;
+    if (normalized.length > 2) terms.add(normalized.toLowerCase());
+    const prefix = normalized.split(",")[0]?.trim().toLowerCase();
+    if (prefix && prefix.length > 3) terms.add(prefix);
+  }
+
+  if ((nextStep?.description || "").toLowerCase().includes("billing")) {
+    ["billing address", "billing", "company"].forEach((term) => terms.add(term));
+  }
+  if ((nextStep?.description || "").toLowerCase().includes("address")) {
+    ["address", "shipping address", "ship to plant"].forEach((term) =>
+      terms.add(term),
+    );
+  }
+
+  return Array.from(terms);
+}
+
+function isLikelyEditButton(el) {
+  if (!el || !el.matches) return false;
+  if (!el.matches('button, [role="button"], .btn, .btn-text')) return false;
+  const descriptor = (getElementDescriptor(el) || "").toLowerCase().trim();
+  if (descriptor === "edit") return true;
+  const text = getVisibleText(el).toLowerCase().trim();
+  if (text === "edit") return true;
+  const icon = el.querySelector?.("i, svg, .material-icons, .material-icons-outlined, .MuiSvgIcon-root");
+  const iconText = (getVisibleText(icon) || "").toLowerCase().trim();
+  const iconClass =
+    typeof icon?.className === "string"
+      ? icon.className.toLowerCase()
+      : icon?.className?.baseVal?.toLowerCase() || "";
+  return iconText === "edit" || iconClass.includes("edit");
+}
+
+function findContextualEditButton(step) {
+  const stepDesc = (step?.description || "").toLowerCase().trim();
+  if (stepDesc !== "edit") return null;
+
+  const contextTerms = getStepContextTerms(step);
+  const buttons = Array.from(
+    document.querySelectorAll('button, [role="button"], .btn, .btn-text'),
+  ).filter((el) => isElementVisible(el) && isLikelyEditButton(el));
+
+  const ranked = buttons
+    .map((button) => {
+      let current = button;
+      let depth = 0;
+      let score = 0;
+      while (current && current !== document.body && depth < 7) {
+        const text = getVisibleText(current).toLowerCase();
+        for (const term of contextTerms) {
+          if (term && text.includes(term)) score += term.length > 12 ? 8 : 3;
+        }
+        current = current.parentElement;
+        depth++;
+      }
+      return { button, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return ranked[0] && ranked[0].score > 0 ? ranked[0].button : null;
 }
 
 /**
@@ -561,11 +764,29 @@ function locateElementWithSelectorArray(step, attempt = 0) {
               );
               el = overlayEl;
             } else {
-              logExecution(
-                `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", skipping ambiguous match`,
-                "info",
-              );
-              continue;
+              const contextualEl = preferContextualElement(textMatches, step);
+              if (contextualEl) {
+                logExecution(
+                  `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", resolved from next-step context`,
+                  "info",
+                );
+                el = contextualEl;
+              } else {
+                const nearbyEl = preferNearbyElement(textMatches);
+                if (nearbyEl) {
+                  logExecution(
+                    `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", resolved to nearest prior interaction`,
+                    "info",
+                  );
+                  el = nearbyEl;
+                } else {
+                  logExecution(
+                    `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", skipping ambiguous match`,
+                    "info",
+                  );
+                  continue;
+                }
+              }
             }
           }
         }
@@ -586,11 +807,29 @@ function locateElementWithSelectorArray(step, attempt = 0) {
             );
             el = overlayEl;
           } else {
-            logExecution(
-              `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
-              "info",
-            );
-            continue;
+            const contextualEl = preferContextualElement(visibleElements, step);
+            if (contextualEl) {
+              logExecution(
+                `Strategy ${selector} found ${visibleElements.length} visible elements, resolved from next-step context`,
+                "info",
+              );
+              el = contextualEl;
+            } else {
+              const nearbyEl = preferNearbyElement(visibleElements);
+              if (nearbyEl) {
+                logExecution(
+                  `Strategy ${selector} found ${visibleElements.length} visible elements, resolved to nearest prior interaction`,
+                  "info",
+                );
+                el = nearbyEl;
+              } else {
+                logExecution(
+                  `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
+                  "info",
+                );
+                continue;
+              }
+            }
           }
         }
 
@@ -630,11 +869,29 @@ function locateElementWithSelectorArray(step, attempt = 0) {
               );
               el = overlayEl;
             } else {
-              logExecution(
-                `Strategy ${selector} found ${textMatches.length} XPath text matches for "${expectedText}", skipping ambiguous match`,
-                "info",
-              );
-              continue;
+              const contextualEl = preferContextualElement(textMatches, step);
+              if (contextualEl) {
+                logExecution(
+                  `Strategy ${selector} found ${textMatches.length} XPath text matches for "${expectedText}", resolved from next-step context`,
+                  "info",
+                );
+                el = contextualEl;
+              } else {
+                const nearbyEl = preferNearbyElement(textMatches);
+                if (nearbyEl) {
+                  logExecution(
+                    `Strategy ${selector} found ${textMatches.length} XPath text matches for "${expectedText}", resolved to nearest prior interaction`,
+                    "info",
+                  );
+                  el = nearbyEl;
+                } else {
+                  logExecution(
+                    `Strategy ${selector} found ${textMatches.length} XPath text matches for "${expectedText}", skipping ambiguous match`,
+                    "info",
+                  );
+                  continue;
+                }
+              }
             }
           }
         }
@@ -654,11 +911,29 @@ function locateElementWithSelectorArray(step, attempt = 0) {
             );
             el = overlayEl;
           } else {
-            logExecution(
-              `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
-              "info",
-            );
-            continue;
+            const contextualEl = preferContextualElement(visibleElements, step);
+            if (contextualEl) {
+              logExecution(
+                `Strategy ${selector} found ${visibleElements.length} visible elements, resolved from next-step context`,
+                "info",
+              );
+              el = contextualEl;
+            } else {
+              const nearbyEl = preferNearbyElement(visibleElements);
+              if (nearbyEl) {
+                logExecution(
+                  `Strategy ${selector} found ${visibleElements.length} visible elements, resolved to nearest prior interaction`,
+                  "info",
+                );
+                el = nearbyEl;
+              } else {
+                logExecution(
+                  `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
+                  "info",
+                );
+                continue;
+              }
+            }
           }
         }
 
@@ -734,11 +1009,36 @@ function locateElementWithSelectorArray(step, attempt = 0) {
               );
               el = interactiveElements[0];
             } else {
-              logExecution(
-                `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", skipping ambiguous match`,
-                "info",
+              const contextualEl = preferContextualElement(
+                interactiveElements.length > 1 ? interactiveElements : textMatches,
+                step,
               );
-              continue;
+              if (contextualEl) {
+                logExecution(
+                  `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", resolved from next-step context`,
+                  "info",
+                );
+                el = contextualEl;
+              } else {
+                const nearbyEl = preferNearbyElement(
+                  interactiveElements.length > 1
+                    ? interactiveElements
+                    : textMatches,
+                );
+                if (nearbyEl) {
+                  logExecution(
+                    `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", resolved to nearest prior interaction`,
+                    "info",
+                  );
+                  el = nearbyEl;
+                } else {
+                  logExecution(
+                    `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", skipping ambiguous match`,
+                    "info",
+                  );
+                  continue;
+                }
+              }
             }
           } else if (
             isSpecificSelector(selector) &&
@@ -772,11 +1072,29 @@ function locateElementWithSelectorArray(step, attempt = 0) {
               );
               el = overlayEl;
             } else {
-              logExecution(
-                `Strategy ${selector} matched ${visibleList.length} visible elements, skipping ambiguous selector`,
-                "info",
-              );
-              continue; // Force fallback to next selector (e.g. XPath)
+              const contextualEl = preferContextualElement(visibleList, step);
+              if (contextualEl) {
+                logExecution(
+                  `Strategy ${selector} matched ${visibleList.length} visible elements, resolved from next-step context`,
+                  "info",
+                );
+                el = contextualEl;
+              } else {
+                const nearbyEl = preferNearbyElement(visibleList);
+                if (nearbyEl) {
+                  logExecution(
+                    `Strategy ${selector} matched ${visibleList.length} visible elements, resolved to nearest prior interaction`,
+                    "info",
+                  );
+                  el = nearbyEl;
+                } else {
+                  logExecution(
+                    `Strategy ${selector} matched ${visibleList.length} visible elements, skipping ambiguous selector`,
+                    "info",
+                  );
+                  continue; // Force fallback to next selector (e.g. XPath)
+                }
+              }
             }
           }
         }
@@ -833,6 +1151,15 @@ function locateElementWithSelectorArray(step, attempt = 0) {
         return anyVisibleOption;
       }
     }
+  }
+
+  const contextualEditButton = findContextualEditButton(step);
+  if (contextualEditButton) {
+    logExecution(
+      `Resolved "${step.description}" using contextual edit-button fallback`,
+      "info",
+    );
+    return contextualEditButton;
   }
 
   return null;
@@ -1252,7 +1579,6 @@ function isGenericIconAria(text) {
     "remove",
     "search",
     "filter_list",
-    "edit",
     "delete",
     "download",
     "file_download",
@@ -1469,7 +1795,7 @@ function detectNuances(element, step) {
 function isDecorativeElement(el) {
   if (!el || !el.tagName) return false;
   const tag = el.tagName.toUpperCase();
-  return ["I", "SVG", "PATH", "USE", "SPAN"].includes(tag);
+  return ["I", "SVG", "PATH", "USE", "SPAN", "P"].includes(tag);
 }
 
 function getClickableAncestor(el, maxDepth = 5) {
@@ -1478,8 +1804,28 @@ function getClickableAncestor(el, maxDepth = 5) {
   while (current && depth < maxDepth) {
     const tag = (current.tagName || "").toUpperCase();
     const role = current.getAttribute && current.getAttribute("role");
+    const className =
+      typeof current.className === "string"
+        ? current.className
+        : current.className?.baseVal || "";
     if (tag === "BUTTON" || tag === "A") return current;
-    if (role === "button" || role === "link") return current;
+    if (
+      role === "button" ||
+      role === "link" ||
+      role === "option" ||
+      role === "menuitem" ||
+      role === "tab"
+    )
+      return current;
+    if (
+      typeof className === "string" &&
+      /\b(slds-listbox__option|MuiMenuItem-root|MuiAutocomplete-option|react-datepicker__day|MuiPickersDay-root)\b/.test(
+        className,
+      )
+    ) {
+      return current;
+    }
+    if (tag === "LABEL" || tag === "LI") return current;
     if (current.hasAttribute && current.hasAttribute("onclick")) return current;
     if (typeof current.tabIndex === "number" && current.tabIndex >= 0)
       return current;
@@ -1547,9 +1893,10 @@ function sendStepComplete(stepIndex, maxRetries = 3) {
  * @param {Object} step
  * @param {number} index
  */
-async function executeSingleStep(step, index) {
+async function executeSingleStep(step, index, nextStep = null) {
   if (currentlyExecutingIndex === index) return;
   currentlyExecutingIndex = index;
+  currentPlaybackContext.nextStep = nextStep;
 
   logExecution(`Step ${index + 1} starting: ${JSON.stringify(step)}`, "info");
 
@@ -1707,11 +2054,20 @@ async function executeSingleStep(step, index) {
     }
 
     if (step.action === "click") {
+      const clickedOverlay = getOverlayAncestor(element);
       const clickableParent = isDecorativeElement(element)
         ? getClickableAncestor(element)
         : null;
+      const optionParent =
+        !clickableParent && element.closest
+          ? element.closest(
+              '[role="option"], .slds-listbox__option, [role="menuitem"], .MuiMenuItem-root, .MuiAutocomplete-option, li.slds-listbox__item, .react-datepicker__day, .MuiPickersDay-root',
+            )
+          : null;
       if (clickableParent && clickableParent !== element) {
         element = clickableParent;
+      } else if (optionParent && optionParent !== element) {
+        element = optionParent;
       }
 
       // SETTLE TIME
@@ -1787,10 +2143,12 @@ async function executeSingleStep(step, index) {
         // Use standard click for basic behavior
         element.click();
         lastInteractedElement = element;
+        lastInteractionPoint = { x: clientX, y: clientY };
       } catch (e) {
         console.warn("Event dispatch failed, falling back to basic click", e);
         element.click();
         lastInteractedElement = element;
+        lastInteractionPoint = { x: clientX, y: clientY };
       }
 
       console.log(
@@ -1821,6 +2179,31 @@ async function executeSingleStep(step, index) {
           "info",
         );
         await new Promise((r) => setTimeout(r, 2000));
+      }
+
+      if (
+        clickedOverlay &&
+        (desc.includes("update") ||
+          desc.includes("submit") ||
+          targetText.includes("update") ||
+          targetText.includes("submit"))
+      ) {
+        for (let i = 0; i < 12; i++) {
+          if (
+            !clickedOverlay.isConnected ||
+            !document.contains(clickedOverlay) ||
+            !isElementVisible(clickedOverlay)
+          ) {
+            break;
+          }
+          if (i === 0) {
+            logExecution(
+              `Step ${index + 1}: Waiting for dialog/drawer to close before advancing...`,
+              "info",
+            );
+          }
+          await new Promise((r) => setTimeout(r, 250));
+        }
       }
 
       // Send STEP_COMPLETE immediately.
