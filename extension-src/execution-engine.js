@@ -131,7 +131,11 @@ async function executeCurrentStep() {
   executionState.executingIndex = executionState.currentIndex;
 
   const index = executionState.currentIndex;
-  const step = executionState.steps[index];
+    const step = executionState.steps[index];
+    const stepWithContext = {
+      ...step,
+      nextStep: executionState.steps[index + 1] || null,
+    };
   executionState.activeStepAction = step.action;
   saveState();
 
@@ -221,7 +225,11 @@ async function executeCurrentStep() {
           chrome.tabs
             .sendMessage(
               executionState.tabId,
-              { type: "EXECUTE_SINGLE_STEP", step: step, stepIndex: index },
+              {
+                type: "EXECUTE_SINGLE_STEP",
+                step: stepWithContext,
+                stepIndex: index,
+              },
               { frameId: frame.frameId },
             )
             .catch(() => {}); // Expected if frame is cross-origin or gone

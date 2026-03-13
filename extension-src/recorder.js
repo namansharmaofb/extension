@@ -137,9 +137,26 @@ function handleClick(event) {
 
     // Promote to interactive parent if clicking on child element
     let target = getInteractiveParent(rawTarget);
+    const editSelectorTarget =
+      typeof getEditSelectorBaseElement === "function"
+        ? getEditSelectorBaseElement(target)
+        : null;
+    if (editSelectorTarget) {
+      target = editSelectorTarget;
+    }
 
     const selectors = generateSelectors(target);
     const descriptor = getElementDescriptor(target);
+    const editContext =
+      typeof findEditButtonContextText === "function"
+        ? findEditButtonContextText(target)
+        : "";
+    const stepDescription =
+      editContext &&
+      typeof isEditButtonElement === "function" &&
+      isEditButtonElement(target)
+        ? `Edit ${editContext}`
+        : descriptor;
     const nuanceMetadata = getElementState(target);
 
     // Calculate click offset relative to element
@@ -153,7 +170,7 @@ function handleClick(event) {
       selector: selectors.selector,
       selectorType: selectors.selectorType,
       tagName: target.tagName,
-      description: descriptor,
+      description: stepDescription,
       url: window.location.href,
       nuanceMetadata: nuanceMetadata,
       offsetX: offsetX,

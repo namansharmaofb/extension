@@ -264,11 +264,16 @@ async function executeCurrentStep() {
     }
 
     // Send command to content script
+    const stepWithContext = {
+      ...step,
+      nextStep: executionState.steps[executionState.currentIndex + 1] || null,
+    };
+
     chrome.tabs.sendMessage(
       executionState.tabId,
       {
         type: "EXECUTE_SINGLE_STEP",
-        step: step,
+        step: stepWithContext,
         stepIndex: executionState.currentIndex,
       },
       (response) => {

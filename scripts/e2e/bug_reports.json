@@ -1072,5 +1072,47 @@
     "description": "Step 55 stalled for 30s: Click executed on Handling Charge at (1044.96875, 540.5)",
     "ariaSnapshot": null,
     "timestamp": "2026-03-10T07:32:30.374Z"
+  },
+  {
+    "id": "BUG-1773388168892",
+    "title": "Failure in dsgfsafj",
+    "description": "Element not found for step 14: Element not found or not visible for step:14 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_362_1773388168799.json",
+    "timestamp": "2026-03-13T07:49:28.892Z"
+  },
+  {
+    "id": "BUG-1773392206494",
+    "title": "Failure in Test 362",
+    "description": "Step 13 stalled for 30s: STEP_COMPLETE delivered successfully (attempt 1)",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-13T08:56:46.494Z"
+  },
+  {
+    "id": "BUG-1773393660485",
+    "title": "Failure in dsgfsafj",
+    "description": "Element not found for step 19: Element not found or not visible for step:19 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_362_1773393660290.json",
+    "timestamp": "2026-03-13T09:21:00.486Z"
+  },
+  {
+    "id": "BUG-1773393755034",
+    "title": "Failure in dsgfsafj",
+    "description": "Element not found for step 17: Element not found or not visible for step:17 (click)",
+    "ariaSnapshot": "/home/namansharma/Desktop/PROJECTS/extension/scripts/e2e/aria-snapshots/aria_snapshot_error_362_1773393754912.json",
+    "timestamp": "2026-03-13T09:22:35.034Z"
+  },
+  {
+    "id": "BUG-1773394666118",
+    "title": "Failure in Test 362",
+    "description": "Step 13 stalled for 30s: Waiting 1.5s for MUI dialog/drawer to open after edit click...",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-13T09:37:46.118Z"
+  },
+  {
+    "id": "BUG-1773395971955",
+    "title": "Failure in Test 363",
+    "description": "Step 15 stalled for 30s: Waiting 2s for transition after transition-triggering click...",
+    "ariaSnapshot": null,
+    "timestamp": "2026-03-13T09:59:31.955Z"
   }
 ]

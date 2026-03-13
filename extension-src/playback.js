@@ -1,5 +1,31 @@
 // Engine for finding elements and executing commands during flow playback
 let lastInteractedElement = null;
+let lastActiveOverlayElement = null;
+let pinnedOverlayElement = null;
+
+const OVERLAY_CONTAINER_SELECTOR = [
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '[role="menu"]',
+  '[role="listbox"]',
+  "dialog",
+  "[data-popper-placement]",
+  "[data-radix-popper-content-wrapper]",
+  "[data-radix-dialog-content]",
+  "[data-floating-ui-portal]",
+  '[class*="MuiModal"]',
+  '[class*="MuiDialog"]',
+  '[class*="MuiDrawer"]',
+  '[class*="MuiPopover"]',
+  '[class*="MuiPopper"]',
+  '[class*="ant-modal"]',
+  '[class*="ant-drawer"]',
+  '[class*="chakra-modal"]',
+  '[class*="chakra-popover"]',
+  '[class*="react-select__menu"]',
+  '[class*="slds-modal"]',
+  '[class*="slds-dropdown"]',
+].join(", ");
 
 /**
  * Extracts the accessible name and optional role from an ARIA selector string.
@@ -30,59 +56,647 @@ function extractAriaName(ariaText) {
  * @param {HTMLElement} el
  * @returns {boolean}
  */
+function isOverlayContainer(el) {
+  if (!el || el === document.body) return false;
+
+  const role = (el.getAttribute("role") || "").toLowerCase();
+  if (
+    [
+      "dialog",
+      "alertdialog",
+      "menu",
+      "listbox",
+      "tooltip",
+      "tree",
+      "presentation",
+    ].includes(role)
+  )
+    return true;
+  if (el.tagName === "DIALOG") return true;
+
+  const cls = el.className || "";
+  if (
+    typeof cls === "string" &&
+    (/\b(modal|popover|dropdown-menu|drawer|popup|overlay)\b/i.test(cls) ||
+      /\b(MuiModal|MuiPopover|MuiDrawer|MuiDialog|MuiMenu-paper|MuiAutocomplete-popper)\b/i.test(
+        cls,
+      ) ||
+      /\b(ant-modal|ant-popover|ant-dropdown|ant-drawer|ant-select-dropdown)\b/i.test(
+        cls,
+      ) ||
+      /\b(modal-dialog|modal-content)\b/i.test(cls) ||
+      /\b(portal|react-select__menu|slds-modal|slds-dropdown|chakra-modal|chakra-popover)\b/i.test(
+        cls,
+      ))
+  )
+    return true;
+
+  if (
+    el.hasAttribute("data-popper-placement") ||
+    el.hasAttribute("data-radix-popper-content-wrapper") ||
+    el.hasAttribute("data-radix-dialog-content") ||
+    el.hasAttribute("data-floating-ui-portal")
+  )
+    return true;
+
+  const style = window.getComputedStyle(el);
+  if (
+    (style.position === "fixed" || style.position === "absolute") &&
+    parseInt(style.zIndex, 10) >= 100
+  ) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 80 && rect.height > 40) return true;
+  }
+
+  return false;
+}
+
 function isInsideOverlay(el) {
   let current = el ? el.parentElement : null;
   let depth = 0;
   while (current && current !== document.body && depth < 30) {
-    const role = (current.getAttribute("role") || "").toLowerCase();
-    if (
-      [
-        "dialog",
-        "alertdialog",
-        "menu",
-        "listbox",
-        "tooltip",
-        "tree",
-        "presentation",
-      ].includes(role)
-    )
-      return true;
-    if (current.tagName === "DIALOG") return true;
-    const cls = current.className || "";
-    if (
-      typeof cls === "string" &&
-      (/\b(modal|popover|dropdown-menu|drawer|popup|overlay)\b/i.test(cls) ||
-        /\b(MuiModal|MuiPopover|MuiDrawer|MuiDialog|MuiMenu-paper|MuiAutocomplete-popper)\b/i.test(
-          cls,
-        ) ||
-        /\b(ant-modal|ant-popover|ant-dropdown|ant-drawer|ant-select-dropdown)\b/i.test(
-          cls,
-        ) ||
-        /\b(modal-dialog|modal-content)\b/i.test(cls) ||
-        /\b(portal|react-select__menu|slds-modal|slds-dropdown|chakra-modal|chakra-popover)\b/i.test(
-          cls,
-        ))
-    )
-      return true;
-    if (
-      current.hasAttribute("data-popper-placement") ||
-      current.hasAttribute("data-radix-popper-content-wrapper") ||
-      current.hasAttribute("data-radix-dialog-content") ||
-      current.hasAttribute("data-floating-ui-portal")
-    )
-      return true;
-    const style = window.getComputedStyle(current);
-    if (
-      (style.position === "fixed" || style.position === "absolute") &&
-      parseInt(style.zIndex, 10) >= 100
-    ) {
-      const rect = current.getBoundingClientRect();
-      if (rect.width > 80 && rect.height > 40) return true;
-    }
+    if (isOverlayContainer(current)) return true;
     current = current.parentElement;
     depth++;
   }
   return false;
+}
+
+function getNearestOverlayContainer(el) {
+  let current = el || null;
+  let depth = 0;
+  while (current && current !== document.body && depth < 30) {
+    if (isOverlayContainer(current)) return current;
+    current = current.parentElement;
+    depth++;
+  }
+  return null;
+}
+
+function getElementMaxZIndex(el) {
+  let current = el;
+  let maxZ = -1;
+  let depth = 0;
+  while (current && current !== document.body && depth < 30) {
+    const z = parseInt(window.getComputedStyle(current).zIndex, 10);
+    if (!isNaN(z) && z > maxZ) maxZ = z;
+    current = current.parentElement;
+    depth++;
+  }
+  return maxZ;
+}
+
+function chooseTopmostElement(elements) {
+  if (!elements || elements.length === 0) return null;
+  if (elements.length === 1) return elements[0];
+
+  const active = document.activeElement;
+  const scored = elements.map((el) => {
+    const overlay = getNearestOverlayContainer(el) || (isOverlayContainer(el) ? el : null);
+    return {
+      el,
+      zIndex: getElementMaxZIndex(el),
+      containsActive:
+        !!active &&
+        active !== document.body &&
+        (el.contains(active) || (!!overlay && overlay.contains(active))),
+    };
+  });
+
+  scored.sort((a, b) => {
+    if (a.containsActive !== b.containsActive) {
+      return a.containsActive ? -1 : 1;
+    }
+    if (a.zIndex !== b.zIndex) {
+      return b.zIndex - a.zIndex;
+    }
+
+    const position = a.el.compareDocumentPosition(b.el);
+    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return 1;
+    if (position & Node.DOCUMENT_POSITION_PRECEDING) return -1;
+    return 0;
+  });
+
+  return scored[0].el;
+}
+
+function overlayHasVisibleContent(overlay) {
+  if (!overlay || !overlay.isConnected) return false;
+  if (isElementVisible(overlay)) return true;
+
+  const descendants = overlay.querySelectorAll("*");
+  for (const child of descendants) {
+    if (isElementVisible(child)) return true;
+  }
+  return false;
+}
+
+function getVisibleOverlayCandidates() {
+  const rawCandidates = Array.from(
+    document.querySelectorAll(OVERLAY_CONTAINER_SELECTOR),
+  ).filter(
+    (candidate) =>
+      isOverlayContainer(candidate) && overlayHasVisibleContent(candidate),
+  );
+
+  return rawCandidates.filter(
+    (candidate) => !getNearestOverlayContainer(candidate.parentElement),
+  );
+}
+
+function getTopmostActiveOverlay() {
+  const candidates = getVisibleOverlayCandidates();
+
+  if (
+    lastActiveOverlayElement &&
+    lastActiveOverlayElement.isConnected &&
+    isOverlayContainer(lastActiveOverlayElement) &&
+    overlayHasVisibleContent(lastActiveOverlayElement) &&
+    !candidates.includes(lastActiveOverlayElement)
+  ) {
+    candidates.push(lastActiveOverlayElement);
+  }
+
+  const overlay = chooseTopmostElement(candidates);
+  lastActiveOverlayElement = overlay || null;
+  return lastActiveOverlayElement;
+}
+
+function getPinnedOverlayContext() {
+  if (
+    pinnedOverlayElement &&
+    pinnedOverlayElement.isConnected &&
+    isOverlayContainer(pinnedOverlayElement) &&
+    overlayHasVisibleContent(pinnedOverlayElement)
+  ) {
+    return pinnedOverlayElement;
+  }
+
+  pinnedOverlayElement = null;
+  return null;
+}
+
+function prioritizeCurrentOverlayMatches(elements) {
+  if (!elements || elements.length === 0) return [];
+
+  const overlay = getPinnedOverlayContext() || getTopmostActiveOverlay();
+  if (!overlay) return elements;
+
+  const scoped = elements.filter((candidate) =>
+    candidate === overlay || overlay.contains(candidate),
+  );
+  return scoped.length > 0 ? scoped : elements;
+}
+
+function getPageRect(element) {
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  return {
+    x: Math.round(rect.left + window.scrollX),
+    y: Math.round(rect.top + window.scrollY),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+function scoreCandidateAgainstRecordedRect(step, element) {
+  if (!step?.nuanceMetadata?.rect || !element) return null;
+
+  const recordedRect = step.nuanceMetadata.rect;
+  const rect = getPageRect(element);
+  if (!rect) return null;
+
+  const recordedCenterX = recordedRect.x + recordedRect.width / 2;
+  const recordedCenterY = recordedRect.y + recordedRect.height / 2;
+  const currentCenterX = rect.x + rect.width / 2;
+  const currentCenterY = rect.y + rect.height / 2;
+
+  const distance = Math.hypot(
+    currentCenterX - recordedCenterX,
+    currentCenterY - recordedCenterY,
+  );
+  const sizeDelta =
+    Math.abs(rect.width - recordedRect.width) +
+    Math.abs(rect.height - recordedRect.height);
+  const tagPenalty =
+    step.tagName &&
+    typeof step.tagName === "string" &&
+    element.tagName !== step.tagName
+      ? 500
+      : 0;
+
+  return distance + sizeDelta * 2 + tagPenalty;
+}
+
+function chooseBestCandidateByRecordedRect(step, elements) {
+  if (
+    !step ||
+    step.action !== "click" ||
+    !step.nuanceMetadata?.rect ||
+    !elements ||
+    elements.length < 2
+  ) {
+    return null;
+  }
+
+  const scored = elements
+    .map((element) => ({
+      element,
+      score: scoreCandidateAgainstRecordedRect(step, element),
+    }))
+    .filter((entry) => entry.score !== null && Number.isFinite(entry.score))
+    .sort((a, b) => a.score - b.score);
+
+  if (scored.length === 0) return null;
+  if (scored.length === 1) return scored[0].element;
+
+  const best = scored[0];
+  const second = scored[1];
+
+  // Only trust geometry when the best match is meaningfully better.
+  if (best.score <= 80 || best.score + 40 < second.score) {
+    return best.element;
+  }
+
+  return null;
+}
+
+function hasEditLikeSignal(element) {
+  if (!element) return false;
+
+  const ariaLabel = (element.getAttribute("aria-label") || "").toLowerCase();
+  if (ariaLabel.includes("edit")) return true;
+
+  const title = (element.getAttribute("title") || "").toLowerCase();
+  if (title.includes("edit")) return true;
+
+  const text = getVisibleText(element).toLowerCase();
+  if (text === "edit" || text.includes(" edit")) return true;
+
+  const icon = element.querySelector(
+    "svg, i, .material-icons, .MuiSvgIcon-root, .fa, .fas, .far",
+  );
+  if (!icon) return false;
+
+  const className =
+    typeof icon.className === "string" ? icon.className : icon.className?.baseVal;
+  const signals = [
+    icon.getAttribute("data-testid"),
+    icon.getAttribute("name"),
+    icon.getAttribute("aria-label"),
+    icon.getAttribute("title"),
+    className,
+    icon.textContent,
+  ];
+
+  return signals.some(
+    (value) => typeof value === "string" && /(edit|pencil|create)/i.test(value),
+  );
+}
+
+function extractNextStepContextTokens(step) {
+  const nextStep = step?.nextStep;
+  if (!nextStep) return [];
+
+  const sources = [
+    nextStep.description,
+    nextStep.target,
+    nextStep.selector,
+    ...(Array.isArray(nextStep.selectors)
+      ? nextStep.selectors.map((entry) => (Array.isArray(entry) ? entry[0] : entry))
+      : []),
+  ]
+    .filter((value) => typeof value === "string")
+    .join(" ")
+    .toLowerCase()
+    .replace(/aria\//g, " ")
+    .replace(/xpath\//g, " ")
+    .replace(/[\[\]()*>"'=:/,.-]+/g, " ");
+
+  const stopWords = new Set([
+    "aria",
+    "xpath",
+    "button",
+    "combobox",
+    "textbox",
+    "dialog",
+    "drawer",
+    "input",
+    "option",
+    "selected",
+    "remove",
+    "click",
+    "edit",
+    "update",
+    "submit",
+    "value",
+    "role",
+    "div",
+    "span",
+    "form",
+  ]);
+
+  return Array.from(
+    new Set(
+      sources
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter(
+          (token) =>
+            token.length >= 4 &&
+            !stopWords.has(token) &&
+            !/^\d+$/.test(token),
+        ),
+    ),
+  );
+}
+
+function normalizeContextString(value) {
+  return (value || "")
+    .toLowerCase()
+    .replace(/aria\//g, " ")
+    .replace(/xpath\//g, " ")
+    .replace(/[\[\]()*>"'=:/,.-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractNextStepContextPhrases(step) {
+  const nextStep = step?.nextStep;
+  if (!nextStep) return [];
+
+  const sources = [
+    nextStep.description,
+    nextStep.target,
+    nextStep.selector,
+  ].filter((value) => typeof value === "string");
+
+  return Array.from(
+    new Set(
+      sources
+        .map(normalizeContextString)
+        .filter((value) => value.length >= 4),
+    ),
+  );
+}
+
+function countEditSignalsWithin(container, currentElement) {
+  if (!container || !container.querySelectorAll) return 0;
+  return Array.from(
+    container.querySelectorAll('button, [role="button"], a, [tabindex]'),
+  ).filter(
+    (candidate) =>
+      candidate !== currentElement &&
+      candidate.isConnected &&
+      isElementVisible(candidate) &&
+      hasEditLikeSignal(candidate),
+  ).length;
+}
+
+function scoreParentContainerForContext(container, step, currentElement, depth) {
+  if (!container) return null;
+
+  const text = normalizeContextString(getVisibleText(container));
+  if (!text || text.length < 4) return null;
+  if (text.length > 800) return null;
+
+  const phrases = extractNextStepContextPhrases(step);
+  const tokens = extractNextStepContextTokens(step);
+  const phraseScore = phrases.reduce(
+    (total, phrase) => total + (text.includes(phrase) ? phrase.length * 25 : 0),
+    0,
+  );
+  const tokenScore = tokens.reduce(
+    (total, token) => total + (text.includes(token) ? token.length * 4 : 0),
+    0,
+  );
+
+  if (phraseScore === 0 && tokenScore === 0) return null;
+
+  const extraEditSignals = countEditSignalsWithin(container, currentElement);
+  const proximityBonus = Math.max(0, 30 - depth * 4);
+  const densityPenalty = extraEditSignals * 12;
+  const lengthPenalty = Math.max(0, Math.floor(text.length / 120));
+
+  return phraseScore + tokenScore + proximityBonus - densityPenalty - lengthPenalty;
+}
+
+function findBestContextContainerForEdit(element, step) {
+  let current = element;
+  let depth = 0;
+  let best = null;
+
+  while (current && current !== document.body && depth < 7) {
+    const score = scoreParentContainerForContext(current, step, element, depth);
+    if (score !== null && (!best || score > best.score)) {
+      best = { container: current, score, depth };
+    }
+    current = current.parentElement;
+    depth++;
+  }
+
+  return best;
+}
+
+function chooseBestCandidateByParentContext(step, elements) {
+  if (!step?.nextStep || !elements || elements.length < 2) return null;
+
+  const scored = elements
+    .map((element) => {
+      const bestContainer = findBestContextContainerForEdit(element, step);
+      return {
+        element,
+        score: bestContainer?.score ?? null,
+        depth: bestContainer?.depth ?? 99,
+      };
+    })
+    .filter((entry) => entry.score !== null)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.depth - b.depth;
+    });
+
+  if (scored.length === 0) return null;
+  if (scored.length === 1) return scored[0].element;
+
+  const best = scored[0];
+  const second = scored[1];
+  if (best.score > second.score) {
+    return best.element;
+  }
+
+  return null;
+}
+
+function getEditCandidateContextText(element) {
+  const parts = [];
+  let current = element;
+  let depth = 0;
+
+  while (current && current !== document.body && depth < 5) {
+    const text = getVisibleText(current).toLowerCase();
+    if (text) parts.push(text);
+    current = current.parentElement;
+    depth++;
+  }
+
+  return parts.join(" | ");
+}
+
+function chooseBestCandidateByNextStepContext(step, elements) {
+  const tokens = extractNextStepContextTokens(step);
+  if (!tokens.length || !elements || elements.length < 2) return null;
+
+  const scored = elements
+    .map((element) => {
+      const contextText = getEditCandidateContextText(element);
+      const score = tokens.reduce(
+        (total, token) => total + (contextText.includes(token) ? token.length : 0),
+        0,
+      );
+      return { element, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0 || scored[0].score <= 0) return null;
+  if (scored.length === 1 || scored[0].score > scored[1].score) {
+    return scored[0].element;
+  }
+
+  return null;
+}
+
+function chooseBestEditButtonCandidate(step, elements) {
+  if (!elements || elements.length === 0) return null;
+  if (elements.length === 1) return elements[0];
+
+  return (
+    chooseBestCandidateByParentContext(step, elements) ||
+    chooseBestCandidateByNextStepContext(step, elements) ||
+    chooseBestCandidateByRecordedRect(step, elements) ||
+    resolveAmbiguousCandidates(step, elements, "edit-candidate-pool", "matched multiple edit candidates") ||
+    chooseTopmostElement(elements)
+  );
+}
+
+function locateEditButtonWithAriaAndXPath(step, selectors) {
+  if (!isEditButtonClickStep(step) || !Array.isArray(selectors)) {
+    return null;
+  }
+
+  const normalizedSelectors = selectors
+    .map((group) => (Array.isArray(group) ? group[0] : group))
+    .filter((selector) => typeof selector === "string");
+
+  const contextualXPathSelectors = normalizedSelectors.filter(isContextualEditXPath);
+  const ariaSelectors = normalizedSelectors.filter((selector) =>
+    selector.startsWith("aria/"),
+  );
+
+  for (const selector of contextualXPathSelectors) {
+    const matches = prioritizeCurrentOverlayMatches(
+      getElementsByXPath(selector.slice(6)),
+    ).filter((element) => isElementVisible(element) && hasEditLikeSignal(element));
+
+    const best = chooseBestEditButtonCandidate(step, matches);
+    if (best) {
+      logExecution(
+        `Resolved edit button using contextual XPath selector ${selector}`,
+        "info",
+      );
+      logSelectorSuccess(selector, best);
+      return best;
+    }
+  }
+
+  for (const selector of ariaSelectors) {
+    const { name: ariaText, role: ariaRole } = parseAriaSelector(selector.slice(5));
+    let matches = prioritizeCurrentOverlayMatches(
+      findAllByAriaLabel(ariaText),
+    ).filter((element) => isElementVisible(element) && hasEditLikeSignal(element));
+
+    if (ariaRole && matches.length > 0) {
+      const roleFiltered = matches.filter((element) =>
+        elementMatchesRole(element, ariaRole),
+      );
+      if (roleFiltered.length > 0) {
+        matches = roleFiltered;
+      }
+    }
+
+    const best = chooseBestEditButtonCandidate(step, matches);
+    if (best) {
+      logExecution(`Resolved edit button using ARIA selector ${selector}`, "info");
+      logSelectorSuccess(selector, best);
+      return best;
+    }
+  }
+
+  const allEditCandidates = prioritizeCurrentOverlayMatches(
+    Array.from(
+      document.querySelectorAll(
+        'button, [role="button"], a, [tabindex], .MuiIconButton-root',
+      ),
+    ),
+  ).filter((element) => isElementVisible(element) && hasEditLikeSignal(element));
+
+  const best = chooseBestEditButtonCandidate(step, allEditCandidates);
+  if (best) {
+    logExecution(
+      `Resolved edit button from generic edit-candidate pool (${allEditCandidates.length} candidates)`,
+      "info",
+    );
+    return best;
+  }
+
+  return null;
+}
+
+function resolveAmbiguousCandidates(step, elements, selector, logContext) {
+  if (!elements || elements.length === 0) return null;
+  if (elements.length === 1) return elements[0];
+
+  const rectMatched = chooseBestCandidateByRecordedRect(step, elements);
+  if (rectMatched) {
+    logExecution(
+      `Strategy ${selector} ${logContext}, resolved using recorded position/size`,
+      "info",
+    );
+    return rectMatched;
+  }
+
+  const overlayEl = preferOverlayElement(elements);
+  if (overlayEl) {
+    logExecution(
+      `Strategy ${selector} ${logContext}, resolved to overlay element`,
+      "info",
+    );
+    return overlayEl;
+  }
+
+  return null;
+}
+
+function snapshotVisibleOverlays() {
+  return getVisibleOverlayCandidates();
+}
+
+function resolveNewOverlayFromSnapshot(previousOverlays) {
+  const currentOverlays = getVisibleOverlayCandidates();
+  if (currentOverlays.length === 0) {
+    pinnedOverlayElement = null;
+    return null;
+  }
+
+  const previousSet = new Set(previousOverlays || []);
+  const newlyOpened = currentOverlays.filter((overlay) => !previousSet.has(overlay));
+  const resolved = chooseTopmostElement(
+    newlyOpened.length > 0 ? newlyOpened : currentOverlays,
+  );
+
+  pinnedOverlayElement = resolved || null;
+  lastActiveOverlayElement = resolved || lastActiveOverlayElement;
+  return pinnedOverlayElement;
 }
 
 /**
@@ -141,14 +755,7 @@ function preferOverlayElement(visibleElements) {
       if (inActiveModal) return inActiveModal.el;
     }
 
-    // Step 5: Final fallback — prefer element later in DOM (most recently appended)
-    topCandidates.sort((a, b) => {
-      const pos = a.el.compareDocumentPosition(b.el);
-      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return 1; // b is after → b wins
-      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return -1; // a is after → a wins
-      return 0;
-    });
-    return topCandidates[topCandidates.length - 1].el;
+    return chooseTopmostElement(topCandidates.map((candidate) => candidate.el));
   }
   return null;
 }
@@ -388,6 +995,8 @@ function isStepTargetingDate(step) {
 
 function locateElement(step, attempt = 0) {
   let element = null;
+  getTopmostActiveOverlay();
+
   // 1. Try new selector array format (or nested selectors object)
   const selectorArray = Array.isArray(step.selectors)
     ? step.selectors
@@ -395,11 +1004,17 @@ function locateElement(step, attempt = 0) {
       ? step.selectors.selectors
       : null;
   if (selectorArray && selectorArray.length > 0) {
+    if (isEditButtonClickStep(step)) {
+      element = locateEditButtonWithAriaAndXPath(step, selectorArray);
+    }
+
     const stepWithArray =
       selectorArray === step.selectors
         ? step
         : { ...step, selectors: selectorArray };
-    element = locateElementWithSelectorArray(stepWithArray, attempt);
+    if (!element) {
+      element = locateElementWithSelectorArray(stepWithArray, attempt);
+    }
   }
 
   // 2. Try legacy single selector if array fails or is missing
@@ -431,13 +1046,153 @@ function locateElement(step, attempt = 0) {
   return element;
 }
 
+function isEditTargetingStep(step) {
+  if (!step) return false;
+
+  const texts = [
+    step.description,
+    step.target,
+    step.selector,
+    ...(Array.isArray(step.selectors)
+      ? step.selectors.map((entry) => (Array.isArray(entry) ? entry[0] : entry))
+      : []),
+  ]
+    .filter((value) => typeof value === "string")
+    .map((value) => value.toLowerCase());
+
+  return texts.some((value) => value.includes("edit"));
+}
+
+function isButtonClickStep(step) {
+  if (!step || step.action !== "click") return false;
+  return (step.tagName || "").toUpperCase() === "BUTTON";
+}
+
+function isEditButtonClickStep(step) {
+  return isButtonClickStep(step) && isEditTargetingStep(step);
+}
+
+function isContextualEditXPath(selector) {
+  if (!selector || typeof selector !== "string") return false;
+  const normalized = selector.toLowerCase();
+  return (
+    normalized.startsWith("xpath/") &&
+    normalized.includes("ancestor::*") &&
+    normalized.includes("edit")
+  );
+}
+
+function isGenericEditAriaSelector(selector) {
+  if (!selector || typeof selector !== "string") return false;
+  const normalized = selector.toLowerCase().trim();
+  return (
+    normalized === "aria/edit" ||
+    normalized === "aria/button[edit]" ||
+    normalized === "aria/i[edit]"
+  );
+}
+
+function isAbsoluteXPathSelector(selector) {
+  if (!selector || typeof selector !== "string") return false;
+  const normalized = selector.toLowerCase();
+  return (
+    normalized.startsWith("xpath///*") ||
+    normalized.startsWith("xpath////") ||
+    normalized.includes("/html/body/")
+  );
+}
+
+function getStepSelectorPriority(selector, step) {
+  if (!selector || typeof selector !== "string") return 100;
+
+  const normalized = selector.toLowerCase();
+
+  if (isEditButtonClickStep(step)) {
+    if (isContextualEditXPath(selector)) return 0;
+    if (normalized.startsWith("aria/")) return 1;
+    if (normalized.includes("#") || normalized.includes("[data-")) return 10;
+    if (normalized.startsWith("xpath/") && !isAbsoluteXPathSelector(selector))
+      return 20;
+    if (normalized.startsWith("css") || normalized.includes(">")) return 30;
+    if (normalized.includes(":nth-of-type")) return 40;
+    if (isAbsoluteXPathSelector(selector)) return 50;
+    return 35;
+  }
+
+  if (isContextualEditXPath(selector)) {
+    return 0;
+  }
+
+  if (isEditTargetingStep(step) && !isButtonClickStep(step)) {
+    if (
+      normalized.includes("card-row-") ||
+      normalized.includes("button.btn-text") ||
+      normalized.includes("material-icons")
+    ) {
+      return 1;
+    }
+    if (normalized.startsWith("xpath/") && !isAbsoluteXPathSelector(selector)) {
+      return 5;
+    }
+    if (normalized.includes("#") || normalized.includes("[data-")) {
+      return 10;
+    }
+    if (isGenericEditAriaSelector(selector)) {
+      return 90;
+    }
+  }
+
+  if (
+    normalized.startsWith("xpath/") &&
+    (normalized.includes("billing") ||
+      normalized.includes("shipping") ||
+      normalized.includes("address") ||
+      normalized.includes("company") ||
+      normalized.includes("plant"))
+  ) {
+    return 1;
+  }
+
+  if (isGenericEditAriaSelector(selector)) return 90;
+  if (normalized.startsWith("aria/") && normalized.includes("edit")) return 5;
+  if (normalized.startsWith("xpath/")) return 10;
+  if (normalized.includes("#") || normalized.includes("[data-")) return 20;
+  if (normalized.includes(":nth-of-type")) return 40;
+  return 30;
+}
+
+function prioritizeSelectorsForStep(selectorGroups, step) {
+  if (!Array.isArray(selectorGroups) || selectorGroups.length <= 1) {
+    return selectorGroups;
+  }
+
+  if (!isEditTargetingStep(step)) {
+    return selectorGroups;
+  }
+
+  return selectorGroups
+    .map((group, index) => ({
+      group,
+      index,
+      selector: Array.isArray(group) ? group[0] : group,
+    }))
+    .sort((a, b) => {
+      const priorityDiff =
+        getStepSelectorPriority(a.selector, step) -
+        getStepSelectorPriority(b.selector, step);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.group);
+}
+
 /**
  * Locates element using new selector array format with Shadow DOM support.
  * @param {Object} step
  * @returns {HTMLElement|null}
  */
 function locateElementWithSelectorArray(step, attempt = 0) {
-  const { selectors } = step;
+  const selectors = prioritizeSelectorsForStep(step.selectors, step);
 
   // WEIGHTED STRATEGY: During the first 2 seconds (8 attempts), prefer "specific" selectors
   // like IDs or unique ARIA names.
@@ -478,19 +1233,21 @@ function locateElementWithSelectorArray(step, attempt = 0) {
             );
 
             const results = findAllByAriaLabel(ariaText, context);
-            const visibleResults = results.filter(isElementVisible);
+            const visibleResults = prioritizeCurrentOverlayMatches(
+              results,
+            ).filter(isElementVisible);
 
             if (ariaRole && visibleResults.length > 0) {
               const roleFiltered = visibleResults.filter((e) =>
                 elementMatchesRole(e, ariaRole),
               );
               if (roleFiltered.length > 0) {
-                el = roleFiltered[0]; // Take first match for intermediate parts
+                el = chooseTopmostElement(roleFiltered);
               } else {
-                el = visibleResults[0];
+                el = chooseTopmostElement(visibleResults);
               }
             } else if (visibleResults.length > 0) {
-              el = visibleResults[0];
+              el = chooseTopmostElement(visibleResults);
             } else {
               el = null;
               break;
@@ -516,6 +1273,7 @@ function locateElementWithSelectorArray(step, attempt = 0) {
           continue;
         }
         let elements = findAllByAriaLabel(ariaText);
+        elements = prioritizeCurrentOverlayMatches(elements);
 
         // If a role was specified (e.g. aria/textbox[Label]), filter by role
         if (ariaRole && elements.length > 0) {
@@ -552,15 +1310,13 @@ function locateElementWithSelectorArray(step, attempt = 0) {
           if (textMatches.length === 1) {
             el = textMatches[0];
           } else if (textMatches.length > 1) {
-            // Multiple elements with same text — try overlay disambiguation
-            const overlayEl = preferOverlayElement(textMatches);
-            if (overlayEl) {
-              logExecution(
-                `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", resolved to overlay element`,
-                "info",
-              );
-              el = overlayEl;
-            } else {
+            el = resolveAmbiguousCandidates(
+              step,
+              textMatches,
+              selector,
+              `found ${textMatches.length} text matches for "${expectedText}"`,
+            );
+            if (!el) {
               logExecution(
                 `Strategy ${selector} found ${textMatches.length} text matches for "${expectedText}", skipping ambiguous match`,
                 "info",
@@ -577,15 +1333,13 @@ function locateElementWithSelectorArray(step, attempt = 0) {
         // If many visible matches and text didn't disambiguate, skip to let
         // more specific selectors (XPath with ID, CSS) win
         if (!el && visibleElements.length > 1) {
-          // Try overlay disambiguation: prefer element inside topmost modal/popover/dropdown
-          const overlayEl = preferOverlayElement(visibleElements);
-          if (overlayEl) {
-            logExecution(
-              `Strategy ${selector} found ${visibleElements.length} visible elements, resolved to overlay element`,
-              "info",
-            );
-            el = overlayEl;
-          } else {
+          el = resolveAmbiguousCandidates(
+            step,
+            visibleElements,
+            selector,
+            `found ${visibleElements.length} visible elements`,
+          );
+          if (!el) {
             logExecution(
               `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
               "info",
@@ -608,10 +1362,11 @@ function locateElementWithSelectorArray(step, attempt = 0) {
       else if (selector.startsWith("xpath/")) {
         const xpath = selector.slice(6);
         const els = getElementsByXPath(xpath);
+        const prioritizedXPathEls = prioritizeCurrentOverlayMatches(els);
 
         // Similar priority strategy for XPath
         const expectedText = (step.description || "").toLowerCase().trim();
-        const visibleElements = els.filter(isElementVisible);
+        const visibleElements = prioritizedXPathEls.filter(isElementVisible);
 
         if (expectedText && expectedText.length > 2) {
           const textMatches = visibleElements.filter((e) => {
@@ -621,15 +1376,13 @@ function locateElementWithSelectorArray(step, attempt = 0) {
           if (textMatches.length === 1) {
             el = textMatches[0];
           } else if (textMatches.length > 1) {
-            // Multiple elements with same text — try overlay disambiguation
-            const overlayEl = preferOverlayElement(textMatches);
-            if (overlayEl) {
-              logExecution(
-                `Strategy ${selector} found ${textMatches.length} XPath text matches for "${expectedText}", resolved to overlay element`,
-                "info",
-              );
-              el = overlayEl;
-            } else {
+            el = resolveAmbiguousCandidates(
+              step,
+              textMatches,
+              selector,
+              `found ${textMatches.length} XPath text matches for "${expectedText}"`,
+            );
+            if (!el) {
               logExecution(
                 `Strategy ${selector} found ${textMatches.length} XPath text matches for "${expectedText}", skipping ambiguous match`,
                 "info",
@@ -645,15 +1398,13 @@ function locateElementWithSelectorArray(step, attempt = 0) {
         }
         // If ambiguous (multiple visible matches), skip to more specific selectors
         if (!el && visibleElements.length > 1) {
-          // Try overlay disambiguation: prefer element inside topmost modal/popover/dropdown
-          const overlayEl = preferOverlayElement(visibleElements);
-          if (overlayEl) {
-            logExecution(
-              `Strategy ${selector} found ${visibleElements.length} visible elements, resolved to overlay element`,
-              "info",
-            );
-            el = overlayEl;
-          } else {
+          el = resolveAmbiguousCandidates(
+            step,
+            visibleElements,
+            selector,
+            `found ${visibleElements.length} visible elements`,
+          );
+          if (!el) {
             logExecution(
               `Strategy ${selector} found ${visibleElements.length} visible elements, skipping ambiguous match`,
               "info",
@@ -681,6 +1432,7 @@ function locateElementWithSelectorArray(step, attempt = 0) {
       else {
         // Try normal first
         const elements = safeQuerySelectorAll(selector);
+        const prioritizedElements = prioritizeCurrentOverlayMatches(elements);
 
         // Strategy: 1. Visible and matches text description
         // 2. Visible
@@ -688,7 +1440,7 @@ function locateElementWithSelectorArray(step, attempt = 0) {
         const expectedText = (step.description || "").toLowerCase().trim();
 
         if (expectedText && expectedText.length > 2) {
-          const visibleMatches = elements.filter(isElementVisible);
+          const visibleMatches = prioritizedElements.filter(isElementVisible);
           const textMatches = visibleMatches.filter((e) => {
             const descriptor = getElementDescriptor(e);
             const visibleText = getVisibleText(e);
@@ -734,6 +1486,14 @@ function locateElementWithSelectorArray(step, attempt = 0) {
               );
               el = interactiveElements[0];
             } else {
+              el = resolveAmbiguousCandidates(
+                step,
+                interactiveElements.length > 1 ? interactiveElements : textMatches,
+                selector,
+                `matched ${textMatches.length} elements for description "${expectedText}"`,
+              );
+            }
+            if (!el) {
               logExecution(
                 `Strategy ${selector} matched ${textMatches.length} elements for description "${expectedText}", skipping ambiguous match`,
                 "info",
@@ -759,19 +1519,17 @@ function locateElementWithSelectorArray(step, attempt = 0) {
         // If this is a generic selector and multiple visible matches exist,
         // skip it to let more specific selectors (XPath, full CSS path) win.
         if (!el) {
-          const visibleList = elements.filter(isElementVisible);
+          const visibleList = prioritizedElements.filter(isElementVisible);
           if (visibleList.length === 1) {
             el = visibleList[0];
           } else if (visibleList.length > 1) {
-            // Try overlay disambiguation: prefer element inside topmost modal/popover/dropdown
-            const overlayEl = preferOverlayElement(visibleList);
-            if (overlayEl) {
-              logExecution(
-                `Strategy ${selector} matched ${visibleList.length} visible elements, resolved to overlay element`,
-                "info",
-              );
-              el = overlayEl;
-            } else {
+            el = resolveAmbiguousCandidates(
+              step,
+              visibleList,
+              selector,
+              `matched ${visibleList.length} visible elements`,
+            );
+            if (!el) {
               logExecution(
                 `Strategy ${selector} matched ${visibleList.length} visible elements, skipping ambiguous selector`,
                 "info",
@@ -963,7 +1721,7 @@ function findAllByAriaLabel(ariaText, root = document) {
  * @returns {HTMLElement|null}
  */
 function findByAriaLabel(ariaText) {
-  const matches = findAllByAriaLabel(ariaText);
+  const matches = prioritizeCurrentOverlayMatches(findAllByAriaLabel(ariaText));
   return matches.find(isElementVisible) || matches[0] || null;
 }
 
@@ -1025,6 +1783,19 @@ function locateElementLegacy(step) {
     }
   }
 
+  if (
+    (isEditTargetingStep(step) || isButtonClickStep(step)) &&
+    activeTargets.length > 1
+  ) {
+    activeTargets.sort((a, b) => {
+      const priorityDiff =
+        getStepSelectorPriority(a.value, step) -
+        getStepSelectorPriority(b.value, step);
+      if (priorityDiff !== 0) return priorityDiff;
+      return 0;
+    });
+  }
+
   // 2. Try each locator strategy
   for (const locator of activeTargets) {
     try {
@@ -1033,8 +1804,12 @@ function locateElementLegacy(step) {
       const normalizedValue = normalizeSelectorValue(type, value);
 
       if (type === "id") {
-        const elements = document.querySelectorAll(
+        const elements = prioritizeCurrentOverlayMatches(
+          Array.from(
+            document.querySelectorAll(
           `[id="${CSS.escape(normalizedValue)}"]`,
+            ),
+          ),
         );
         for (const candidate of elements) {
           if (isElementVisible(candidate)) {
@@ -1043,7 +1818,9 @@ function locateElementLegacy(step) {
           }
         }
       } else if (type === "css" || type === "css:finder") {
-        const elements = safeQuerySelectorAll(normalizedValue);
+        const elements = prioritizeCurrentOverlayMatches(
+          safeQuerySelectorAll(normalizedValue),
+        );
         const expectedText = (
           step.description ||
           step.selectors?.innerText ||
@@ -1098,12 +1875,19 @@ function locateElementLegacy(step) {
           );
           continue;
         }
-        el = findByAriaLabel(ariaName);
+        const ariaMatches = prioritizeCurrentOverlayMatches(
+          findAllByAriaLabel(ariaName),
+        ).filter(isElementVisible);
+        el = chooseTopmostElement(ariaMatches) || findByAriaLabel(ariaName);
       } else if (type === "xpath" || type.startsWith("xpath:")) {
-        const els = getElementsByXPath(normalizedValue);
-        if (els.length > 0) el = els[0];
+        const els = prioritizeCurrentOverlayMatches(
+          getElementsByXPath(normalizedValue),
+        ).filter(isElementVisible);
+        if (els.length > 0) el = chooseTopmostElement(els);
       } else if (type === "linkText") {
-        const links = document.getElementsByTagName("a");
+        const links = prioritizeCurrentOverlayMatches(
+          Array.from(document.getElementsByTagName("a")),
+        );
         for (const link of links) {
           const lText = getVisibleText(link)
             .replace(/\s+/g, " ")
@@ -1116,23 +1900,34 @@ function locateElementLegacy(step) {
           }
         }
       } else if (type === "name") {
-        el = document.querySelector(`[name="${CSS.escape(normalizedValue)}"]`);
+        const nameMatches = prioritizeCurrentOverlayMatches(
+          safeQuerySelectorAll(`[name="${CSS.escape(normalizedValue)}"]`),
+        ).filter(isElementVisible);
+        el = chooseTopmostElement(nameMatches);
       } else if (type === "testId") {
-        el = document.querySelector(
-          `[data-testid="${CSS.escape(normalizedValue)}"], [data-cy="${CSS.escape(normalizedValue)}"], [data-test-id="${CSS.escape(normalizedValue)}"], [data-qa="${CSS.escape(normalizedValue)}"]`,
-        );
+        const testIdMatches = prioritizeCurrentOverlayMatches(
+          safeQuerySelectorAll(
+            `[data-testid="${CSS.escape(normalizedValue)}"], [data-cy="${CSS.escape(normalizedValue)}"], [data-test-id="${CSS.escape(normalizedValue)}"], [data-qa="${CSS.escape(normalizedValue)}"]`,
+          ),
+        ).filter(isElementVisible);
+        el = chooseTopmostElement(testIdMatches);
       } else if (type === "placeholder") {
-        el = document.querySelector(
-          `[placeholder="${CSS.escape(normalizedValue)}"]`,
-        );
+        const placeholderMatches = prioritizeCurrentOverlayMatches(
+          safeQuerySelectorAll(`[placeholder="${CSS.escape(normalizedValue)}"]`),
+        ).filter(isElementVisible);
+        el = chooseTopmostElement(placeholderMatches);
       } else if (type === "role") {
         // Parse role: button[name='Save']
         const match = normalizedValue.match(/([a-z]+)\[name='(.+?)'\]/);
         if (match) {
           const role = match[1];
           const name = match[2];
-          const candidates = document.querySelectorAll(
-            role === "textbox" ? "input, textarea" : role,
+          const candidates = prioritizeCurrentOverlayMatches(
+            Array.from(
+              document.querySelectorAll(
+                role === "textbox" ? "input, textarea" : role,
+              ),
+            ),
           );
           for (const candidate of candidates) {
             const cName =
@@ -1172,17 +1967,23 @@ function locateElementLegacy(step) {
 
   // Legacy Fallback — require visibility to avoid returning collapsed/hidden elements
   if (selectors && selectors.css) {
-    const el = safeQuerySelectorAll(selectors.css)[0];
+    const el = prioritizeCurrentOverlayMatches(
+      safeQuerySelectorAll(selectors.css),
+    ).find((candidate) => candidate.isConnected && isElementVisible(candidate));
     if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
   if (selector) {
-    const el = safeQuerySelectorAll(selector)[0];
+    const el = prioritizeCurrentOverlayMatches(
+      safeQuerySelectorAll(selector),
+    ).find((candidate) => candidate.isConnected && isElementVisible(candidate));
     if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
   if (selectors && selectors.id) {
-    const el = document.getElementById(selectors.id);
+    const el = prioritizeCurrentOverlayMatches(
+      Array.from(document.querySelectorAll(`[id="${CSS.escape(selectors.id)}"]`)),
+    ).find((candidate) => candidate.isConnected && isElementVisible(candidate));
     if (el && el.isConnected && isElementVisible(el)) return el;
   }
 
@@ -1252,7 +2053,6 @@ function isGenericIconAria(text) {
     "remove",
     "search",
     "filter_list",
-    "edit",
     "delete",
     "download",
     "file_download",
@@ -1265,6 +2065,14 @@ function isGenericIconAria(text) {
 function isSpecificSelector(selector) {
   if (!selector || typeof selector !== "string") return false;
   if (selector.includes("#")) return true;
+  // Treat context-aware edit XPath (produced by buildEditContextualXPath) as specific
+  // so it is not skipped during the early transition phase.
+  if (
+    selector.startsWith("xpath/") &&
+    selector.includes("edit") &&
+    selector.includes("ancestor::*")
+  )
+    return true;
   return /\[(data-testid|data-cy|data-test-id|data-qa|aria-label|name)=/i.test(
     selector,
   );
@@ -1318,7 +2126,6 @@ function stripIconWords(text) {
     "close",
     "search",
     "filter_list",
-    "edit",
     "delete",
     "download",
     "upload",
@@ -1338,8 +2145,12 @@ function fuzzyFallbackSearch(step) {
   // If all specific locators fail, search for any clickable element with matching text
   const searchText = step.description || step.value || "";
   if (searchText && searchText.length > 2 && searchText.length < 50) {
-    const allElements = document.querySelectorAll(
-      "button, a, div[role='button'], input[type='submit'], span",
+    const allElements = prioritizeCurrentOverlayMatches(
+      Array.from(
+        document.querySelectorAll(
+          "button, a, div[role='button'], input[type='submit'], span",
+        ),
+      ),
     );
     for (const el of allElements) {
       const elText = getVisibleText(el)
@@ -1707,6 +2518,21 @@ async function executeSingleStep(step, index) {
     }
 
     if (step.action === "click") {
+      const desc = (step.description || "").toLowerCase();
+      const targetText = (step.target || "").toLowerCase();
+      const isEditClick =
+        desc.includes("edit") ||
+        targetText.includes("edit") ||
+        (step.selectors || []).some(
+          (s) =>
+            (Array.isArray(s) ? s[0] : s)
+              ?.toLowerCase()
+              .includes("edit"),
+        );
+      const overlaySnapshotBeforeClick = isEditClick
+        ? snapshotVisibleOverlays()
+        : null;
+
       const clickableParent = isDecorativeElement(element)
         ? getClickableAncestor(element)
         : null;
@@ -1803,9 +2629,24 @@ async function executeSingleStep(step, index) {
 
       // POST-CLICK SETTLE TIME: If this button likely triggers a transition (e.g. "Send OTP", "Login"),
       // wait a bit longer to allow the UI to actually change before sendStepComplete fires.
-      const desc = (step.description || "").toLowerCase();
-      const targetText = (step.target || "").toLowerCase();
-      if (
+      // For edit-button clicks, wait for MUI Dialog/Drawer to animate open before
+      // the next step tries to find elements inside it.
+      if (isEditClick) {
+        logExecution(
+          `Step ${index + 1}: Waiting 1.5s for MUI dialog/drawer to open after edit click...`,
+          "info",
+        );
+        await new Promise((r) => setTimeout(r, 1500));
+        const openedOverlay = resolveNewOverlayFromSnapshot(
+          overlaySnapshotBeforeClick,
+        );
+        if (openedOverlay) {
+          logExecution(
+            `Step ${index + 1}: Locked follow-up steps to opened overlay "${getElementDescriptor(openedOverlay) || openedOverlay.className || openedOverlay.tagName}"`,
+            "info",
+          );
+        }
+      } else if (
         desc.includes("otp") ||
         desc.includes("login") ||
         desc.includes("submit") ||
@@ -1821,6 +2662,9 @@ async function executeSingleStep(step, index) {
           "info",
         );
         await new Promise((r) => setTimeout(r, 2000));
+        const activeOverlay = getTopmostActiveOverlay();
+        pinnedOverlayElement =
+          getPinnedOverlayContext() || activeOverlay || pinnedOverlayElement;
       }
 
       // Send STEP_COMPLETE immediately.

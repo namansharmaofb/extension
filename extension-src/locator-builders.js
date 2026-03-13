@@ -69,8 +69,14 @@ function getFullXPath(element) {
  */
 function generateSelectors(element) {
   if (!element || element.nodeType !== 1) return null;
+  element = getEditSelectorBaseElement(element) || element;
 
   const selectors = []; // Array of [selector] arrays — built in priority order
+  const editContextXPath = buildEditContextualXPath(element);
+
+  if (editContextXPath) {
+    selectors.push([editContextXPath]);
+  }
 
   // ── 1. data-testid / data-cy / data-test / data-qa ─────────────────
   // Most precise — explicitly set for testing
@@ -463,6 +469,194 @@ function getSelectorType(selector) {
 }
 
 /* ---------------- helpers ---------------- */
+
+const XPATH_UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const XPATH_LOWERCASE = "abcdefghijklmnopqrstuvwxyz";
+
+function buildEditContextualXPath(element) {
+  try {
+    const editElement = getEditSelectorBaseElement(element);
+    if (!editElement || !isEditButtonElement(editElement)) return null;
+
+    const contextText = findEditButtonContextText(editElement);
+    if (!contextText) return null;
+
+    const contextLiteral = toXPathLiteral(contextText);
+    const editButtonPredicate = [
+      `contains(translate(normalize-space(@aria-label), "${XPATH_UPPERCASE}", "${XPATH_LOWERCASE}"), "edit")`,
+      `normalize-space(.)="Edit"`,
+      `.//*[self::svg or self::i or contains(concat(" ", normalize-space(@class), " "), " MuiSvgIcon-root ")][contains(${buildEditIconSignalXPath(".")}, "edit") or contains(${buildEditIconSignalXPath(".")}, "pencil") or contains(${buildEditIconSignalXPath(".")}, "create")]`,
+    ].join(" or ");
+    const contextPredicate = [
+      `@aria-label=${contextLiteral}`,
+      `self::section[.//text()[normalize-space()=${contextLiteral}]]`,
+      `.//*[self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or self::legend or self::label or @role="heading"][normalize-space(.)=${contextLiteral}]`,
+      `.//*[contains(concat(" ", normalize-space(@class), " "), " MuiTypography-root ") or contains(concat(" ", normalize-space(@class), " "), " MuiCardHeader-title ") or contains(concat(" ", normalize-space(@class), " "), " MuiFormLabel-root ") or contains(concat(" ", normalize-space(@class), " "), " MuiInputLabel-root ")][normalize-space(.)=${contextLiteral}]`,
+    ].join(" or ");
+
+    const tagName = editElement.tagName.toLowerCase();
+    return `xpath///${tagName}[${editButtonPredicate}][ancestor::*[${contextPredicate}]]`;
+  } catch (err) {
+    return null;
+  }
+}
+
+function getEditSelectorBaseElement(element) {
+  if (!element || element.nodeType !== 1) return null;
+
+  if (isEditButtonElement(element)) return element;
+
+  const clickableAncestor = element.closest(
+    'button, a, [role="button"], [tabindex]',
+  );
+
+  if (clickableAncestor && isEditButtonElement(clickableAncestor)) {
+    return clickableAncestor;
+  }
+
+  return null;
+}
+
+function isEditButtonElement(element) {
+  if (!element) return false;
+
+  const tagName = (element.tagName || "").toUpperCase();
+  const role = (element.getAttribute("role") || "").toLowerCase();
+  const isClickable =
+    tagName === "BUTTON" ||
+    tagName === "A" ||
+    role === "button" ||
+    element.hasAttribute("tabindex");
+
+  if (!isClickable) return false;
+
+  const ariaLabel = (element.getAttribute("aria-label") || "").toLowerCase();
+  if (ariaLabel.includes("edit")) return true;
+
+  const text = getVisibleText(element).replace(/\s+/g, " ").trim();
+  if (text === "Edit") return true;
+
+  return hasEditButtonIcon(element);
+}
+
+function hasEditButtonIcon(element) {
+  const icon = element.querySelector(
+    "svg, i, .material-icons, .MuiSvgIcon-root, .fa, .fas, .far",
+  );
+  if (!icon) return false;
+
+  const className =
+    typeof icon.className === "string" ? icon.className : icon.className?.baseVal;
+  const iconSignals = [
+    icon.getAttribute("data-testid"),
+    icon.getAttribute("name"),
+    icon.getAttribute("aria-label"),
+    icon.getAttribute("title"),
+    className,
+    icon.textContent,
+  ];
+
+  return iconSignals.some(
+    (value) => typeof value === "string" && /(edit|pencil|create)/i.test(value),
+  );
+}
+
+function findEditButtonContextText(element) {
+  element = getEditSelectorBaseElement(element) || element;
+  let current = element.parentElement;
+  let depth = 0;
+
+  while (current && current !== document.body && depth < 5) {
+    const labelledBy = current.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      for (const id of labelledBy.split(/\s+/)) {
+        const labelledElement = id ? document.getElementById(id) : null;
+        const labelledText = normalizeEditContextText(
+          getVisibleText(labelledElement),
+        );
+        if (labelledText) return labelledText;
+      }
+    }
+
+    const ariaLabel = normalizeEditContextText(current.getAttribute("aria-label"));
+    if (ariaLabel) return ariaLabel;
+
+    const labelledText = getTextFromContextCandidates(current, element);
+    if (labelledText) return labelledText;
+
+    current = current.parentElement;
+    depth++;
+  }
+
+  return null;
+}
+
+function getTextFromContextCandidates(container, element) {
+  const candidates = container.querySelectorAll(
+    "h1, h2, h3, h4, h5, h6, legend, label, [role='heading'], .MuiTypography-root, .MuiCardHeader-title, .MuiFormLabel-root, .MuiInputLabel-root",
+  );
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate.contains(element)) continue;
+
+    const position = candidate.compareDocumentPosition(element);
+    if (!(position & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+
+    const text = normalizeEditContextText(getVisibleText(candidate));
+    if (text) return text;
+  }
+
+  let sibling = container.previousElementSibling;
+  while (sibling) {
+    const text = normalizeEditContextText(getVisibleText(sibling));
+    if (text) return text;
+    sibling = sibling.previousElementSibling;
+  }
+
+  sibling = element.previousElementSibling;
+  while (sibling) {
+    const text = normalizeEditContextText(getVisibleText(sibling));
+    if (text) return text;
+    sibling = sibling.previousElementSibling;
+  }
+
+  return null;
+}
+
+function normalizeEditContextText(text) {
+  if (!text || typeof text !== "string") return "";
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length < 3 || normalized.length > 80) return "";
+  if (/^edit$/i.test(normalized)) return "";
+  if (isGenericIconText(normalized)) return "";
+  if (/^(button|icon button)$/i.test(normalized)) return "";
+
+  return normalized;
+}
+
+function buildEditIconSignalXPath(nodeExpr) {
+  return `translate(concat(" ", normalize-space(${nodeExpr}/@data-testid), " ", normalize-space(${nodeExpr}/@name), " ", normalize-space(${nodeExpr}/@class), " ", normalize-space(${nodeExpr}/@aria-label), " ", normalize-space(${nodeExpr}/@title), " ", normalize-space(${nodeExpr})), "${XPATH_UPPERCASE}", "${XPATH_LOWERCASE}")`;
+}
+
+function toXPathLiteral(value) {
+  if (!value.includes("'")) return `'${value}'`;
+  if (!value.includes('"')) return `"${value}"`;
+
+  const parts = value.split("'");
+  const tokens = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]) {
+      tokens.push(`'${parts[i]}'`);
+    }
+    if (i < parts.length - 1) {
+      tokens.push(`"'"`);
+    }
+  }
+
+  return `concat(${tokens.join(", ")})`;
+}
 
 function isDynamic(value) {
   if (typeof value !== "string") return true;
